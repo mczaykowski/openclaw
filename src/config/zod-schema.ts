@@ -641,6 +641,22 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    temporal: z
+      .object({
+        enabled: z.boolean().optional(),
+        address: z.string().optional(),
+        namespace: z.string().optional(),
+        taskQueue: z.string().optional(),
+        features: z
+          .object({
+            heartbeats: z.boolean().optional(),
+            reflection: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {

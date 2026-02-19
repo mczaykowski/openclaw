@@ -17,6 +17,13 @@ import { formatForLog } from "./ws-log.js";
 
 const MAX_EXEC_EVENT_OUTPUT_CHARS = 180;
 
+function toStringOrEmpty(val: unknown): string {
+  if (typeof val === "string") {
+    return val.trim();
+  }
+  return "";
+}
+
 function compactExecEventOutput(raw: string) {
   const normalized = raw.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -69,193 +76,175 @@ async function touchSessionStore(params: {
   });
 }
 
-function parseSessionKeyFromPayloadJSON(payloadJSON: string): string | null {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(payloadJSON) as unknown;
-  } catch {
-    return null;
-  }
-  if (typeof payload !== "object" || payload === null) {
-    return null;
-  }
-  const obj = payload as Record<string, unknown>;
-  const sessionKey = typeof obj.sessionKey === "string" ? obj.sessionKey.trim() : "";
-  return sessionKey.length > 0 ? sessionKey : null;
-}
-
 export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt: NodeEvent) => {
-  switch (evt.event) {
-    case "voice.transcript": {
-      if (!evt.payloadJSON) {
-        return;
+  const event = evt.event;
+  let p: Record<string, unknown> = {};
+  if (evt.payloadJSON) {
+    try {
+      const parsed = JSON.parse(evt.payloadJSON);
+      if (typeof parsed === "object" && parsed !== null) {
+        p = parsed as Record<string, unknown>;
       }
-      let payload: unknown;
-      try {
-        payload = JSON.parse(evt.payloadJSON) as unknown;
-      } catch {
-        return;
-      }
-      const obj =
-        typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
-      const text = typeof obj.text === "string" ? obj.text.trim() : "";
-      if (!text) {
-        return;
-      }
-      if (text.length > 20_000) {
-        return;
-      }
-      const sessionKeyRaw = typeof obj.sessionKey === "string" ? obj.sessionKey.trim() : "";
-      const cfg = loadConfig();
-      const rawMainKey = normalizeMainKey(cfg.session?.mainKey);
-      const sessionKey = sessionKeyRaw.length > 0 ? sessionKeyRaw : rawMainKey;
-      const { storePath, entry, canonicalKey } = loadSessionEntry(sessionKey);
-      const now = Date.now();
-      const sessionId = entry?.sessionId ?? randomUUID();
-      await touchSessionStore({ cfg, sessionKey, storePath, canonicalKey, entry, sessionId, now });
+    } catch {
+      // Ignore malformed JSON
+    }
+  }
 
-      // Ensure chat UI clients refresh when this run completes (even though it wasn't started via chat.send).
-      // This maps agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
-      ctx.addChatRun(sessionId, {
+  const sessionKey = toStringOrEmpty(p.sessionKey);
+  const nodeIdForLog = nodeId || "unknown-node";
+
+  // Security: check if the node is authorized to interact with the session.
+  // Standard nodes are restricted to their own "node-${nodeId}" sessions unless
+  // they have "operator.admin" or "operator.write" scopes.
+  if (event === "voice.transcript" || event === "agent.request" || event === "chat.subscribe") {
+    if (!ctx.isNodeAuthorizedForSession(nodeId, sessionKey)) {
+      ctx.logGateway.warn(
+        `node.event: unauthorized node=${nodeIdForLog} event=${event} session=${sessionKey}`,
+      );
+      return;
+    }
+  }
+
+  if (event === "voice.transcript") {
+    const text = toStringOrEmpty(p.text);
+    if (!text) {
+      return;
+    }
+    if (text.length > 20_000) {
+      return;
+    }
+
+    const cfg = loadConfig();
+    const rawMainKey = normalizeMainKey(cfg.session?.mainKey);
+    const resolvedSessionKey = sessionKey.length > 0 ? sessionKey : rawMainKey;
+    const { storePath, entry, canonicalKey } = loadSessionEntry(resolvedSessionKey);
+    const now = Date.now();
+    const sessionId = entry?.sessionId ?? randomUUID();
+    await touchSessionStore({
+      cfg,
+      sessionKey: resolvedSessionKey,
+      storePath,
+      canonicalKey,
+      entry,
+      sessionId,
+      now,
+    });
+
+    // Ensure chat UI clients refresh when this run completes (even though it wasn't started via chat.send).
+    // This maps agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
+    ctx.addChatRun(sessionId, {
+      sessionKey: canonicalKey,
+      clientRunId: `voice-${randomUUID()}`,
+    });
+
+    void agentCommand(
+      {
+        message: text,
+        sessionId,
         sessionKey: canonicalKey,
-        clientRunId: `voice-${randomUUID()}`,
-      });
+        thinking: "low",
+        deliver: false,
+        messageChannel: "node",
+      },
+      defaultRuntime,
+      ctx.deps,
+    ).catch((err) => {
+      ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
+    });
+    return;
+  }
 
-      void agentCommand(
-        {
-          message: text,
-          sessionId,
-          sessionKey: canonicalKey,
-          thinking: "low",
-          deliver: false,
-          messageChannel: "node",
-        },
-        defaultRuntime,
-        ctx.deps,
-      ).catch((err) => {
-        ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
-      });
+  if (event === "agent.request") {
+    const message = toStringOrEmpty(p.message);
+    if (!message) {
       return;
     }
-    case "agent.request": {
-      if (!evt.payloadJSON) {
-        return;
-      }
-      type AgentDeepLink = {
-        message?: string;
-        sessionKey?: string | null;
-        thinking?: string | null;
-        deliver?: boolean;
-        to?: string | null;
-        channel?: string | null;
-        timeoutSeconds?: number | null;
-        key?: string | null;
-      };
-      let link: AgentDeepLink | null = null;
-      try {
-        link = JSON.parse(evt.payloadJSON) as AgentDeepLink;
-      } catch {
-        return;
-      }
-      const message = (link?.message ?? "").trim();
-      if (!message) {
-        return;
-      }
-      if (message.length > 20_000) {
-        return;
-      }
-
-      const channelRaw = typeof link?.channel === "string" ? link.channel.trim() : "";
-      const channel = normalizeChannelId(channelRaw) ?? undefined;
-      const to = typeof link?.to === "string" && link.to.trim() ? link.to.trim() : undefined;
-      const deliver = Boolean(link?.deliver) && Boolean(channel);
-
-      const sessionKeyRaw = (link?.sessionKey ?? "").trim();
-      const sessionKey = sessionKeyRaw.length > 0 ? sessionKeyRaw : `node-${nodeId}`;
-      const cfg = loadConfig();
-      const { storePath, entry, canonicalKey } = loadSessionEntry(sessionKey);
-      const now = Date.now();
-      const sessionId = entry?.sessionId ?? randomUUID();
-      await touchSessionStore({ cfg, sessionKey, storePath, canonicalKey, entry, sessionId, now });
-
-      void agentCommand(
-        {
-          message,
-          sessionId,
-          sessionKey: canonicalKey,
-          thinking: link?.thinking ?? undefined,
-          deliver,
-          to,
-          channel,
-          timeout:
-            typeof link?.timeoutSeconds === "number" ? link.timeoutSeconds.toString() : undefined,
-          messageChannel: "node",
-        },
-        defaultRuntime,
-        ctx.deps,
-      ).catch((err) => {
-        ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
-      });
+    if (message.length > 20_000) {
       return;
     }
-    case "chat.subscribe": {
-      if (!evt.payloadJSON) {
-        return;
-      }
-      const sessionKey = parseSessionKeyFromPayloadJSON(evt.payloadJSON);
-      if (!sessionKey) {
-        return;
-      }
-      ctx.nodeSubscribe(nodeId, sessionKey);
+
+    const channelRaw = toStringOrEmpty(p.channel);
+    const channel = normalizeChannelId(channelRaw) ?? undefined;
+    const to = toStringOrEmpty(p.to) || undefined;
+    const deliver = Boolean(p.deliver) && Boolean(channel);
+
+    const cfg = loadConfig();
+    const resolvedSessionKey = sessionKey.length > 0 ? sessionKey : `node-${nodeId}`;
+    const { storePath, entry, canonicalKey } = loadSessionEntry(resolvedSessionKey);
+    const now = Date.now();
+    const sessionId = entry?.sessionId ?? randomUUID();
+    await touchSessionStore({
+      cfg,
+      sessionKey: resolvedSessionKey,
+      storePath,
+      canonicalKey,
+      entry,
+      sessionId,
+      now,
+    });
+
+    void agentCommand(
+      {
+        message,
+        sessionId,
+        sessionKey: canonicalKey,
+        thinking: toStringOrEmpty(p.thinking) || undefined,
+        deliver,
+        to,
+        channel,
+        timeout: typeof p.timeoutSeconds === "number" ? p.timeoutSeconds.toString() : undefined,
+        messageChannel: "node",
+      },
+      defaultRuntime,
+      ctx.deps,
+    ).catch((err) => {
+      ctx.logGateway.warn(`agent failed node=${nodeId}: ${formatForLog(err)}`);
+    });
+    return;
+  }
+
+  if (event === "chat.subscribe") {
+    if (!sessionKey) {
       return;
     }
-    case "chat.unsubscribe": {
-      if (!evt.payloadJSON) {
-        return;
-      }
-      const sessionKey = parseSessionKeyFromPayloadJSON(evt.payloadJSON);
-      if (!sessionKey) {
-        return;
-      }
-      ctx.nodeUnsubscribe(nodeId, sessionKey);
+    ctx.nodeSubscribe(nodeId, sessionKey);
+    return;
+  }
+
+  if (event === "chat.unsubscribe") {
+    if (!sessionKey) {
       return;
     }
+    ctx.nodeUnsubscribe(nodeId, sessionKey);
+    return;
+  }
+
+  if (event === "voice.wake.changed") {
+    const triggers = Array.isArray(p.triggers) ? (p.triggers as string[]) : [];
+    ctx.broadcastVoiceWakeChanged(triggers);
+    return;
+  }
+
+  switch (event) {
     case "exec.started":
     case "exec.finished":
     case "exec.denied": {
-      if (!evt.payloadJSON) {
-        return;
-      }
-      let payload: unknown;
-      try {
-        payload = JSON.parse(evt.payloadJSON) as unknown;
-      } catch {
-        return;
-      }
-      const obj =
-        typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
-      const sessionKey =
-        typeof obj.sessionKey === "string" ? obj.sessionKey.trim() : `node-${nodeId}`;
-      if (!sessionKey) {
-        return;
-      }
-      const runId = typeof obj.runId === "string" ? obj.runId.trim() : "";
-      const command = typeof obj.command === "string" ? obj.command.trim() : "";
+      const sessionKeyForExec = sessionKey || `node-${nodeId}`;
+      const runId = toStringOrEmpty(p.runId);
+      const command = toStringOrEmpty(p.command);
       const exitCode =
-        typeof obj.exitCode === "number" && Number.isFinite(obj.exitCode)
-          ? obj.exitCode
-          : undefined;
-      const timedOut = obj.timedOut === true;
-      const output = typeof obj.output === "string" ? obj.output.trim() : "";
-      const reason = typeof obj.reason === "string" ? obj.reason.trim() : "";
+        typeof p.exitCode === "number" && Number.isFinite(p.exitCode) ? p.exitCode : undefined;
+      const timedOut = p.timedOut === true;
+      const output = toStringOrEmpty(p.output);
+      const reason = toStringOrEmpty(p.reason);
 
       let text = "";
-      if (evt.event === "exec.started") {
+      if (event === "exec.started") {
         text = `Exec started (node=${nodeId}${runId ? ` id=${runId}` : ""})`;
         if (command) {
           text += `: ${command}`;
         }
-      } else if (evt.event === "exec.finished") {
+      } else if (event === "exec.finished") {
         const exitLabel = timedOut ? "timeout" : `code ${exitCode ?? "?"}`;
         const compactOutput = compactExecEventOutput(output);
         const shouldNotify = timedOut || exitCode !== 0 || compactOutput.length > 0;
@@ -273,7 +262,10 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
         }
       }
 
-      enqueueSystemEvent(text, { sessionKey, contextKey: runId ? `exec:${runId}` : "exec" });
+      enqueueSystemEvent(text, {
+        sessionKey: sessionKeyForExec,
+        contextKey: runId ? `exec:${runId}` : "exec",
+      });
       requestHeartbeatNow({ reason: "exec-event" });
       return;
     }

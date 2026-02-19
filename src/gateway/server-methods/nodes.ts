@@ -489,6 +489,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
         getHealthCache: context.getHealthCache,
         refreshHealthSnapshot: context.refreshHealthSnapshot,
         loadGatewayModelCatalog: context.loadGatewayModelCatalog,
+        isNodeAuthorizedForSession: context.isNodeAuthorizedForSession,
         logGateway: { warn: context.logGateway.warn },
       };
       await handleNodeEvent(nodeContext, nodeId, {

@@ -196,7 +196,7 @@ export function resolveHeartbeatSummaryForAgent(
   };
 }
 
-function resolveHeartbeatAgents(cfg: OpenClawConfig): HeartbeatAgent[] {
+export function resolveHeartbeatAgents(cfg: OpenClawConfig): HeartbeatAgent[] {
   const list = cfg.agents?.list ?? [];
   if (hasExplicitHeartbeatAgents(cfg)) {
     return list

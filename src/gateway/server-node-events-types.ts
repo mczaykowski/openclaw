@@ -27,6 +27,7 @@ export type NodeEventContext = {
   getHealthCache: () => HealthSummary | null;
   refreshHealthSnapshot: (opts?: { probe?: boolean }) => Promise<HealthSummary>;
   loadGatewayModelCatalog: () => Promise<ModelCatalogEntry[]>;
+  isNodeAuthorizedForSession: (nodeId: string, sessionKey: string) => boolean;
   logGateway: { warn: (msg: string) => void };
 };
 

@@ -10,6 +10,7 @@ export type NodeSubscriptionManager = {
   subscribe: (nodeId: string, sessionKey: string) => void;
   unsubscribe: (nodeId: string, sessionKey: string) => void;
   unsubscribeAll: (nodeId: string) => void;
+  isSubscribed: (nodeId: string, sessionKey: string) => boolean;
   sendToSession: (
     sessionKey: string,
     event: string,
@@ -97,6 +98,11 @@ export function createNodeSubscriptionManager(): NodeSubscriptionManager {
     nodeSubscriptions.delete(normalizedNodeId);
   };
 
+  const isSubscribed = (nodeId: string, sessionKey: string) => {
+    const subs = nodeSubscriptions.get(nodeId.trim());
+    return subs ? subs.has(sessionKey.trim()) : false;
+  };
+
   const sendToSession = (
     sessionKey: string,
     event: string,
@@ -156,6 +162,7 @@ export function createNodeSubscriptionManager(): NodeSubscriptionManager {
     subscribe,
     unsubscribe,
     unsubscribeAll,
+    isSubscribed,
     sendToSession,
     sendToAllSubscribed,
     sendToAllConnected,

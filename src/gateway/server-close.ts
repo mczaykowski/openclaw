@@ -5,6 +5,8 @@ import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
+import type { startTemporalWorker } from "../temporal/worker/index.js";
+import type { OpenClawTemporalClient } from "../temporal/client/index.js";
 
 export function createGatewayCloseHandler(params: {
   bonjourStop: (() => Promise<void>) | null;
@@ -29,6 +31,8 @@ export function createGatewayCloseHandler(params: {
   wss: WebSocketServer;
   httpServer: HttpServer;
   httpServers?: HttpServer[];
+  temporalWorker?: Awaited<ReturnType<typeof startTemporalWorker>> | null;
+  temporalClient?: OpenClawTemporalClient | null;
 }) {
   return async (opts?: { reason?: string; restartExpectedMs?: number | null }) => {
     const reasonRaw = typeof opts?.reason === "string" ? opts.reason.trim() : "";
@@ -107,6 +111,12 @@ export function createGatewayCloseHandler(params: {
     await params.configReloader.stop().catch(() => {});
     if (params.browserControl) {
       await params.browserControl.stop().catch(() => {});
+    }
+    if (params.temporalWorker) {
+      await params.temporalWorker.stop().catch(() => {});
+    }
+    if (params.temporalClient) {
+      await params.temporalClient.close().catch(() => {});
     }
     await new Promise<void>((resolve) => params.wss.close(() => resolve()));
     const servers =

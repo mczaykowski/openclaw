@@ -83,6 +83,7 @@ export type GatewayRequestContext = {
     prompter: import("../../wizard/prompts.js").WizardPrompter,
   ) => Promise<void>;
   broadcastVoiceWakeChanged: (triggers: string[]) => void;
+  isNodeAuthorizedForSession: (node_id: string, session_key: string) => boolean;
 };
 
 export type GatewayRequestOptions = {
