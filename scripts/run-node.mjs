@@ -5,8 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-const compiler = "tsdown";
-const compilerArgs = ["exec", compiler, "--no-clean"];
+const compilerArgs = ["dist:build", "--", "--no-clean"];
 
 const gitWatchedPaths = ["src", "tsconfig.json", "package.json"];
 
