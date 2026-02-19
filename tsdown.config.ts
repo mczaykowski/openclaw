@@ -18,6 +18,21 @@ export default defineConfig([
     platform: "node",
   },
   {
+    // Temporal workflows need to be present on disk so @temporalio/worker can bundle them.
+    entry: "src/temporal/workflows/index.ts",
+    outDir: "dist/temporal/workflows",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
+    entry: "src/temporal/workflows/heartbeat.ts",
+    outDir: "dist/temporal/workflows",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
+  {
     // Ensure this module is bundled as an entry so legacy CLI shims can resolve its exports.
     entry: "src/cli/daemon-cli.ts",
     env,
