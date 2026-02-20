@@ -520,6 +520,7 @@ export async function startGatewayServer(
       temporalClient = await OpenClawTemporalClient.connect({
         address: cfgAtStart.temporal.address,
         namespace: cfgAtStart.temporal.namespace,
+        taskQueue: cfgAtStart.temporal.taskQueue,
       });
 
       temporalWorker = await startTemporalWorker({
