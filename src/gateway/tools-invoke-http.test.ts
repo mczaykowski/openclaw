@@ -65,6 +65,11 @@ vi.mock("../agents/openclaw-tools.js", () => {
       execute: async () => ({ ok: true }),
     },
     {
+      name: "exec",
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ ok: true }),
+    },
+    {
       name: "agents_list",
       parameters: { type: "object", properties: { action: { type: "string" } } },
       execute: async () => ({ ok: true, result: [] }),
@@ -386,6 +391,63 @@ describe("POST /tools/invoke", () => {
     });
 
     expect(res.status).toBe(404);
+  });
+
+  it("denies exec via HTTP even when agent policy allows", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [
+          {
+            id: "main",
+            default: true,
+            tools: { allow: ["exec"] },
+          },
+        ],
+      },
+    };
+
+    const token = resolveGatewayToken();
+
+    const res = await invokeTool({
+      port: sharedPort,
+      tool: "exec",
+      args: { cmd: "echo", args: ["hi"] },
+      headers: { authorization: `Bearer ${token}` },
+      sessionKey: "main",
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("allows exec via HTTP when explicitly enabled in gateway.tools.allow", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [
+          {
+            id: "main",
+            default: true,
+            tools: { allow: ["exec"] },
+          },
+        ],
+      },
+      gateway: { tools: { allow: ["exec"] } },
+    };
+
+    const token = resolveGatewayToken();
+
+    const res = await invokeTool({
+      port: sharedPort,
+      tool: "exec",
+      args: { cmd: "echo", args: ["hi"] },
+      headers: { authorization: `Bearer ${token}` },
+      sessionKey: "main",
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
   });
 
   it("denies gateway tool via HTTP", async () => {

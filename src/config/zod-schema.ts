@@ -442,6 +442,12 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        pluginHttp: z
+          .object({
+            publicPaths: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
         tailscale: z
           .object({
             mode: z.union([z.literal("off"), z.literal("serve"), z.literal("funnel")]).optional(),

@@ -276,6 +276,18 @@ export type GatewayToolsConfig = {
   allow?: string[];
 };
 
+export type GatewayPluginHttpConfig = {
+  /**
+   * Plugin HTTP paths that should be treated as public (no gateway auth).
+   *
+   * Notes:
+   * - By default, plugin HTTP handlers/routes are gateway-auth protected.
+   * - Use this only for webhook-style endpoints where gateway auth is not viable.
+   * - Entries support exact match ("/foo") and prefix match when ending with "*" ("/foo/*").
+   */
+  publicPaths?: string[];
+};
+
 export type GatewayConfig = {
   /** Single multiplexed port for Gateway WS + HTTP (default: 18789). */
   port?: number;
@@ -312,4 +324,6 @@ export type GatewayConfig = {
   trustedProxies?: string[];
   /** Tool access restrictions for HTTP /tools/invoke endpoint. */
   tools?: GatewayToolsConfig;
+  /** Plugin HTTP routing policy. */
+  pluginHttp?: GatewayPluginHttpConfig;
 };

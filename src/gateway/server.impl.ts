@@ -31,12 +31,7 @@ import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
-import {
-  startHeartbeatRunner,
-  type HeartbeatRunner,
-  resolveHeartbeatAgents,
-  resolveHeartbeatIntervalMs,
-} from "../infra/heartbeat-runner.js";
+import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
@@ -51,6 +46,8 @@ import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js
 import { getGlobalHookRunner, runGlobalGatewayStopSafely } from "../plugins/hook-runner-global.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
+import { OpenClawTemporalClient } from "../temporal/client/index.js";
+import { startTemporalWorker } from "../temporal/worker/index.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
@@ -88,8 +85,6 @@ import {
   refreshGatewayHealthSnapshot,
 } from "./server/health-state.js";
 import { loadGatewayTlsRuntime } from "./server/tls.js";
-import { startTemporalWorker } from "../temporal/worker/index.js";
-import { OpenClawTemporalClient } from "../temporal/client/index.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
 
@@ -510,9 +505,10 @@ export async function startGatewayServer(
     : startHeartbeatRunner({
         cfg: cfgAtStart,
         // Disable local heartbeats if Temporal is handling them
-        runOnce: cfgAtStart.temporal?.enabled && cfgAtStart.temporal?.features?.heartbeats
-          ? async () => ({ status: "skipped", reason: "temporal-enabled" })
-          : undefined
+        runOnce:
+          cfgAtStart.temporal?.enabled && cfgAtStart.temporal?.features?.heartbeats
+            ? async () => ({ status: "skipped", reason: "temporal-enabled" })
+            : undefined,
       });
 
   let temporalWorker: Awaited<ReturnType<typeof startTemporalWorker>> | undefined;
@@ -534,13 +530,17 @@ export async function startGatewayServer(
 
       // If heartbeats are enabled for Temporal, trigger them for all agents
       if (cfgAtStart.temporal.features?.heartbeats) {
-        const { resolveHeartbeatAgents, resolveHeartbeatIntervalMs } = await import("../infra/heartbeat-runner.js");
+        const { resolveHeartbeatAgents, resolveHeartbeatIntervalMs } =
+          await import("../infra/heartbeat-runner.js");
         const agents = resolveHeartbeatAgents(cfgAtStart);
         for (const agent of agents) {
           const intervalMs = resolveHeartbeatIntervalMs(cfgAtStart, undefined, agent.heartbeat);
           if (intervalMs) {
-            void temporalClient.startHeartbeatWorkflow(agent.agentId, intervalMs).catch(err => {
-              log.error("Failed to start heartbeat workflow for agent", { agentId: agent.agentId, error: String(err) });
+            void temporalClient.startHeartbeatWorkflow(agent.agentId, intervalMs).catch((err) => {
+              log.error("Failed to start heartbeat workflow for agent", {
+                agentId: agent.agentId,
+                error: String(err),
+              });
             });
           }
         }

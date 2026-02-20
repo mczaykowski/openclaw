@@ -23,8 +23,8 @@ import type { ModelsConfig } from "./types.models.js";
 import type { NodeHostConfig } from "./types.node-host.js";
 import type { PluginsConfig } from "./types.plugins.js";
 import type { SkillsConfig } from "./types.skills.js";
-import type { ToolsConfig } from "./types.tools.js";
 import type { TemporalConfig } from "./types.temporal.js";
+import type { ToolsConfig } from "./types.tools.js";
 
 export type OpenClawConfig = {
   meta?: {

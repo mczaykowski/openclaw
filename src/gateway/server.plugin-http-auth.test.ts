@@ -96,7 +96,7 @@ async function dispatchRequest(
 }
 
 describe("gateway plugin HTTP auth boundary", () => {
-  test("requires gateway auth for /api/channels/* plugin routes and allows authenticated pass-through", async () => {
+  test("requires gateway auth for non-channel plugin routes by default", async () => {
     const resolvedAuth: ResolvedGatewayAuth = {
       mode: "token",
       token: "test-token",
@@ -106,6 +106,53 @@ describe("gateway plugin HTTP auth boundary", () => {
 
     await withTempConfig({
       cfg: { gateway: { trustedProxies: [] } },
+      run: async () => {
+        const handlePluginRequest = vi.fn(async (req: IncomingMessage, res: ServerResponse) => {
+          const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+          if (pathname === "/plugin/public") {
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.end(JSON.stringify({ ok: true, route: "public" }));
+            return true;
+          }
+          return false;
+        });
+
+        const server = createGatewayHttpServer({
+          canvasHost: null,
+          clients: new Set(),
+          controlUiEnabled: false,
+          controlUiBasePath: "/__control__",
+          openAiChatCompletionsEnabled: false,
+          openResponsesEnabled: false,
+          handleHooksRequest: async () => false,
+          handlePluginRequest,
+          resolvedAuth,
+        });
+
+        const unauthenticatedPublic = createResponse();
+        await dispatchRequest(
+          server,
+          createRequest({ path: "/plugin/public" }),
+          unauthenticatedPublic.res,
+        );
+        expect(unauthenticatedPublic.res.statusCode).toBe(401);
+        expect(unauthenticatedPublic.getBody()).toContain("Unauthorized");
+        expect(handlePluginRequest).not.toHaveBeenCalled();
+      },
+    });
+  });
+
+  test("requires gateway auth for /api/channels/* plugin routes and allows authenticated pass-through", async () => {
+    const resolvedAuth: ResolvedGatewayAuth = {
+      mode: "token",
+      token: "test-token",
+      password: undefined,
+      allowTailscale: false,
+    };
+
+    await withTempConfig({
+      cfg: { gateway: { trustedProxies: [], pluginHttp: { publicPaths: ["/plugin/public"] } } },
       run: async () => {
         const handlePluginRequest = vi.fn(async (req: IncomingMessage, res: ServerResponse) => {
           const pathname = new URL(req.url ?? "/", "http://localhost").pathname;

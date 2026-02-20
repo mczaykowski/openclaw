@@ -59,6 +59,32 @@ import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 type HookAuthFailure = { count: number; windowStartedAtMs: number };
 
+function isAllowlistedPluginPublicPath(requestPath: string, allowlist?: string[]): boolean {
+  if (!Array.isArray(allowlist) || allowlist.length === 0) {
+    return false;
+  }
+  for (const raw of allowlist) {
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const entry = raw.trim();
+    if (!entry.startsWith("/")) {
+      continue;
+    }
+    if (entry.endsWith("*")) {
+      const prefix = entry.slice(0, -1);
+      if (prefix && requestPath.startsWith(prefix)) {
+        return true;
+      }
+      continue;
+    }
+    if (requestPath === entry) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const HOOK_AUTH_FAILURE_LIMIT = 20;
 const HOOK_AUTH_FAILURE_WINDOW_MS = 60_000;
 const HOOK_AUTH_FAILURE_TRACK_MAX = 2048;
@@ -499,10 +525,14 @@ export function createGatewayHttpServer(opts: {
         return;
       }
       if (handlePluginRequest) {
-        // Channel HTTP endpoints are gateway-auth protected by default.
-        // Non-channel plugin routes remain plugin-owned and must enforce
-        // their own auth when exposing sensitive functionality.
-        if (requestPath.startsWith("/api/channels/")) {
+        // Plugin HTTP endpoints are gateway-auth protected by default.
+        // Public plugin endpoints (webhooks) must be explicitly allowlisted.
+        // NOTE: /api/channels/* stays auth-protected regardless of allowlist.
+        const pluginPublicPaths = configSnapshot.gateway?.pluginHttp?.publicPaths;
+        const pluginIsPublic = requestPath.startsWith("/api/channels/")
+          ? false
+          : isAllowlistedPluginPublicPath(requestPath, pluginPublicPaths);
+        if (!pluginIsPublic) {
           const token = getBearerToken(req);
           const authResult = await authorizeGatewayConnect({
             auth: resolvedAuth,
@@ -565,6 +595,28 @@ export function createGatewayHttpServer(opts: {
         }
       }
       if (controlUiEnabled) {
+        const isControlUiPath =
+          requestPath === controlUiBasePath || requestPath.startsWith(`${controlUiBasePath}/`);
+        if (isControlUiPath && !isLocalDirectRequest(req, trustedProxies)) {
+          if (resolvedAuth.mode === "none") {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
+            res.end("Forbidden");
+            return;
+          }
+          const token = getBearerToken(req);
+          const authResult = await authorizeGatewayConnect({
+            auth: resolvedAuth,
+            connectAuth: token ? { token, password: token } : null,
+            req,
+            trustedProxies,
+            rateLimiter,
+          });
+          if (!authResult.ok) {
+            sendGatewayAuthFailure(res, authResult);
+            return;
+          }
+        }
         if (
           handleControlUiAvatarRequest(req, res, {
             basePath: controlUiBasePath,

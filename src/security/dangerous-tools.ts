@@ -11,6 +11,16 @@ export const DEFAULT_GATEWAY_HTTP_TOOL_DENY = [
   "sessions_spawn",
   // Cross-session injection — message injection across sessions
   "sessions_send",
+  // Command execution
+  "exec",
+  "spawn",
+  "shell",
+  // Filesystem mutation
+  "fs_write",
+  "fs_delete",
+  "fs_move",
+  // Code mutation (should never be reachable via a generic HTTP tool surface)
+  "apply_patch",
   // Gateway control plane — prevents gateway reconfiguration via HTTP
   "gateway",
   // Interactive setup — requires terminal QR scan, hangs on HTTP
