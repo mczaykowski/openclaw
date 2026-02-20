@@ -106,6 +106,18 @@ In `/home/openclaw/.openclaw/openclaw.json`:
 - `gateway.bind = "loopback"`
 - `gateway.controlUi.enabled = false`
 
+Gateway HTTP hardening (Phase 5):
+
+- Plugin HTTP routes/handlers are **auth-required by default**.
+  - If you need a public webhook-style plugin endpoint, explicitly allowlist it via:
+    - `gateway.pluginHttp.publicPaths = ["/some/path", "/prefix/*"]`
+  - `/api/channels/*` stays auth-required regardless.
+- `POST /tools/invoke` (gateway HTTP tool execution surface) has a tightened default denylist.
+  - High-risk tools like `exec`, `shell`, `spawn`, `fs_*`, `apply_patch` are denied by default.
+  - Explicit override is possible via `gateway.tools.allow`, but treat this as a last resort.
+- Control UI guardrail: if Control UI is enabled, non-local requests require gateway auth.
+  - If gateway auth mode is `none`, non-local Control UI requests are **forbidden**.
+
 Matrix channel (operator comms):
 
 - E2EE enabled
