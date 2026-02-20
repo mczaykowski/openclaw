@@ -248,6 +248,34 @@ cd /opt/temporal
 docker compose ps
 ```
 
+### Temporal verification (is OpenClaw actually using it?)
+
+Temporal is considered "in use" when:
+
+- A durable workflow (e.g. `heartbeat-main`) is **Running**
+- The `openclaw-tasks` task queue has an active poller identity matching the gateway process
+
+Notes:
+
+- The `temporalio/auto-setup` container binds gRPC to its container IP, so `tctl` inside the
+  container must use `--address temporal:7233` (not `127.0.0.1:7233`).
+
+```bash
+# List open workflows (default namespace)
+docker exec temporal sh -lc 'tctl --address temporal:7233 --ns default workflow list --open | head -n 50'
+
+# Describe the OpenClaw heartbeat workflow
+docker exec temporal sh -lc 'tctl --address temporal:7233 --ns default workflow describe -w heartbeat-main | head -n 120'
+
+# Confirm OpenClaw worker is polling the task queue
+docker exec temporal sh -lc 'tctl --address temporal:7233 --ns default taskqueue describe --taskqueue openclaw-tasks | head -n 120'
+```
+
+Expected:
+
+- `agentHeartbeatWorkflow | heartbeat-main | ... | openclaw-tasks | Running`
+- A workflow poller identity like `<gateway-pid>@<hostname>`
+
 ## Phase 4 probe results (summary)
 
 - Only `22/80/443` are public.
