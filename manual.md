@@ -147,6 +147,92 @@ systemctl status openclaw-gateway --no-pager -l
 journalctl -u openclaw-gateway --no-pager -n 200
 ```
 
+## Production upgrade strategy (Temporal-enabled fork)
+
+This deployment intentionally runs from the repo checkout at:
+
+- `/opt/openclaw`
+
+Because this fork includes `temporal` config keys, do **not** replace it with upstream `openclaw@latest` via npm unless/until schemas are confirmed compatible.
+
+### Pre-flight checks
+
+```bash
+sudo -u openclaw -H bash -lc 'cd /opt/openclaw && git rev-parse --abbrev-ref HEAD && git rev-parse HEAD && git status --porcelain'
+systemctl is-active openclaw-gateway
+```
+
+Expected:
+
+- branch is `deploy`
+- working tree is clean
+
+### Upgrade procedure
+
+```bash
+sudo -u openclaw -H bash -lc '
+  set -euo pipefail
+  cd /opt/openclaw
+  git fetch origin --prune
+  git pull --rebase origin main
+  pnpm install
+  pnpm build
+'
+
+systemctl restart openclaw-gateway
+sleep 3
+systemctl is-active openclaw-gateway
+```
+
+### Post-upgrade verification
+
+```bash
+# Check listeners are still correct
+ss -ltnp
+ss -lunp
+
+# Gateway should remain loopback-only
+curl -sS -D- -o /dev/null -m 3 http://127.0.0.1:18789/ || true
+
+# Channel probe should succeed
+sudo -u openclaw -H openclaw channels status --probe
+```
+
+### Rollback procedure
+
+If a new build fails:
+
+1. Roll back the systemd unit if it was changed:
+
+```bash
+ls -1t /etc/systemd/system/openclaw-gateway.service.bak.* | head
+cp -a /etc/systemd/system/openclaw-gateway.service.bak.<timestamp> /etc/systemd/system/openclaw-gateway.service
+systemctl daemon-reload
+```
+
+2. Roll back the config if it was changed:
+
+```bash
+ls -1t /home/openclaw/.openclaw/openclaw.json.bak.* | head
+cp -a /home/openclaw/.openclaw/openclaw.json.bak.<timestamp> /home/openclaw/.openclaw/openclaw.json
+chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json
+chmod 600 /home/openclaw/.openclaw/openclaw.json
+```
+
+3. Roll back code to a known-good commit and rebuild:
+
+```bash
+sudo -u openclaw -H bash -lc '
+  set -euo pipefail
+  cd /opt/openclaw
+  git log -n 10 --oneline
+  git checkout <known-good-sha>
+  pnpm install
+  pnpm build
+'
+systemctl restart openclaw-gateway
+```
+
 ### Matrix stack status
 
 ```bash
