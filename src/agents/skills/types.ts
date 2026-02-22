@@ -16,6 +16,13 @@ export type SkillInstallSpec = {
   targetDir?: string;
 };
 
+export type MCPSkillServerConfig = {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
 export type OpenClawSkillMetadata = {
   always?: boolean;
   skillKey?: string;
@@ -30,6 +37,7 @@ export type OpenClawSkillMetadata = {
     config?: string[];
   };
   install?: SkillInstallSpec[];
+  mcpServer?: MCPSkillServerConfig;
 };
 
 export type SkillInvocationPolicy = {
@@ -85,5 +93,6 @@ export type SkillSnapshot = {
   /** Normalized agent-level filter used to build this snapshot; undefined means unrestricted. */
   skillFilter?: string[];
   resolvedSkills?: Skill[];
+  mcpServers?: MCPSkillServerConfig[];
   version?: number;
 };

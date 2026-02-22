@@ -297,3 +297,54 @@ describe("applySkillEnvOverrides", () => {
     }
   });
 });
+
+describe("buildWorkspaceSkillSnapshot", () => {
+  it("collects MCP servers from skills and applies config overrides", async () => {
+    const workspaceDir = await makeWorkspace();
+
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "github"),
+      name: "github",
+      description: "GitHub skill",
+      metadata:
+        '{"openclaw":{"mcpServer":{"name":"github","command":"npx","args":["@modelcontextprotocol/server-github"]}}}',
+    });
+
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "linear"),
+      name: "linear",
+      description: "Linear skill",
+      metadata:
+        '{"openclaw":{"mcpServer":{"name":"linear","command":"npx","args":["@modelcontextprotocol/server-linear"]}}}',
+    });
+
+    const snapshot = buildWorkspaceSkillSnapshot(workspaceDir, {
+      config: {
+        skills: {
+          mcpServers: {
+            github: {
+              command: "gh-mcp",
+              args: ["--workspace", "team"],
+            },
+            linear: {
+              enabled: false,
+            },
+            custom: {
+              enabled: true,
+              command: "custom-mcp",
+              args: ["--flag"],
+              env: { CUSTOM_TOKEN: "abc" },
+            },
+          },
+        },
+      },
+    });
+
+    const mcpByName = new Map((snapshot.mcpServers ?? []).map((server) => [server.name, server]));
+
+    expect(Array.from(mcpByName.keys()).toSorted()).toEqual(["custom", "github"]);
+    expect(mcpByName.get("github")?.command).toBe("gh-mcp");
+    expect(mcpByName.get("custom")?.env?.CUSTOM_TOKEN).toBe("abc");
+    expect(mcpByName.has("linear")).toBe(false);
+  });
+});

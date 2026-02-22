@@ -10,6 +10,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type {
   ParsedSkillFrontmatter,
   SkillEligibilityContext,
+  MCPSkillServerConfig,
   SkillCommandSpec,
   SkillEntry,
   SkillSnapshot,
@@ -209,6 +210,68 @@ function loadSkillEntries(
   return skillEntries;
 }
 
+function normalizeMcpServerConfig(params: {
+  name: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}): MCPSkillServerConfig | null {
+  const name = params.name.trim();
+  const command = params.command?.trim() ?? "";
+  if (!name || !command) {
+    return null;
+  }
+
+  const args = params.args?.map((arg) => arg.trim()).filter(Boolean);
+  const envEntries = Object.entries(params.env ?? {})
+    .map(([key, value]) => [key.trim(), value] as const)
+    .filter(([key]) => key.length > 0);
+  const env = envEntries.length > 0 ? Object.fromEntries(envEntries) : undefined;
+
+  return {
+    name,
+    command,
+    ...(args && args.length > 0 ? { args } : {}),
+    ...(env ? { env } : {}),
+  };
+}
+
+function resolveSnapshotMcpServers(
+  entries: SkillEntry[],
+  config?: OpenClawConfig,
+): MCPSkillServerConfig[] {
+  const servers = new Map<string, MCPSkillServerConfig>();
+
+  for (const entry of entries) {
+    const mcp = entry.metadata?.mcpServer;
+    if (!mcp) {
+      continue;
+    }
+    const normalized = normalizeMcpServerConfig(mcp);
+    if (!normalized) {
+      continue;
+    }
+    servers.set(normalized.name, normalized);
+  }
+
+  for (const [name, server] of Object.entries(config?.skills?.mcpServers ?? {})) {
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      continue;
+    }
+    if (server?.enabled === false) {
+      servers.delete(normalizedName);
+      continue;
+    }
+    const normalized = normalizeMcpServerConfig({ name: normalizedName, ...server });
+    if (normalized) {
+      servers.set(normalized.name, normalized);
+    }
+  }
+
+  return Array.from(servers.values());
+}
+
 export function buildWorkspaceSkillSnapshot(
   workspaceDir: string,
   opts?: {
@@ -236,6 +299,7 @@ export function buildWorkspaceSkillSnapshot(
   const remoteNote = opts?.eligibility?.remote?.note?.trim();
   const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
   const skillFilter = normalizeSkillFilter(opts?.skillFilter);
+  const mcpServers = resolveSnapshotMcpServers(eligible, opts?.config);
   return {
     prompt,
     skills: eligible.map((entry) => ({
@@ -244,6 +308,7 @@ export function buildWorkspaceSkillSnapshot(
     })),
     ...(skillFilter === undefined ? {} : { skillFilter }),
     resolvedSkills,
+    ...(mcpServers.length > 0 ? { mcpServers } : {}),
     version: opts?.snapshotVersion,
   };
 }

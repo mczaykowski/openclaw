@@ -1,5 +1,6 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type {
+  MCPSkillServerConfig,
   OpenClawSkillMetadata,
   ParsedSkillFrontmatter,
   SkillEntry,
@@ -79,6 +80,43 @@ function parseInstallSpec(input: unknown): SkillInstallSpec | undefined {
   return spec;
 }
 
+function parseMcpServerSpec(input: unknown): MCPSkillServerConfig | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const command = typeof raw.command === "string" ? raw.command.trim() : "";
+  if (!name || !command) {
+    return undefined;
+  }
+
+  const args = normalizeStringList(raw.args);
+  const envRaw = raw.env;
+  let env: Record<string, string> | undefined;
+  if (envRaw && typeof envRaw === "object" && !Array.isArray(envRaw)) {
+    const envEntries: Array<[string, string]> = [];
+    for (const [key, value] of Object.entries(envRaw as Record<string, unknown>)) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey || typeof value !== "string") {
+        continue;
+      }
+      envEntries.push([normalizedKey, value]);
+    }
+    if (envEntries.length > 0) {
+      env = Object.fromEntries(envEntries);
+    }
+  }
+
+  return {
+    name,
+    command,
+    args: args.length > 0 ? args : undefined,
+    env,
+  };
+}
+
 export function resolveOpenClawMetadata(
   frontmatter: ParsedSkillFrontmatter,
 ): OpenClawSkillMetadata | undefined {
@@ -86,6 +124,7 @@ export function resolveOpenClawMetadata(
   if (!metadataObj) {
     return undefined;
   }
+  const mcpServer = parseMcpServerSpec(metadataObj.mcpServer ?? metadataObj.mcp_server);
   const requires = resolveOpenClawManifestRequires(metadataObj);
   const install = resolveOpenClawManifestInstall(metadataObj, parseInstallSpec);
   const osRaw = resolveOpenClawManifestOs(metadataObj);
@@ -98,6 +137,7 @@ export function resolveOpenClawMetadata(
     os: osRaw.length > 0 ? osRaw : undefined,
     requires: requires,
     install: install.length > 0 ? install : undefined,
+    mcpServer,
   };
 }
 

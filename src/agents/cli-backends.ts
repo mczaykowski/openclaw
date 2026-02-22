@@ -53,6 +53,8 @@ const DEFAULT_CLAUDE_BACKEND: CliBackendConfig = {
   systemPromptMode: "append",
   systemPromptWhen: "first",
   clearEnv: ["ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_OLD"],
+  mcpConfigArg: "--mcp-config",
+  mcpStrictConfigFlag: "--strict-mcp-config",
   reliability: {
     watchdog: {
       fresh: { ...CLI_FRESH_WATCHDOG_DEFAULTS },

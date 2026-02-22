@@ -1,7 +1,13 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/config.js";
+import type { CliBackendConfig } from "../config/types.js";
 import type { EmbeddedPiRunResult } from "./pi-embedded-runner.js";
+import type { SkillSnapshot } from "./skills/types.js";
 import { resolveHeartbeatPrompt } from "../auto-reply/heartbeat.js";
 import { shouldLogVerbose } from "../globals.js";
 import { isTruthyEnvValue } from "../infra/env.js";
@@ -32,6 +38,76 @@ import { redactRunIdentifier, resolveRunWorkspaceDir } from "./workspace-run.js"
 
 const log = createSubsystemLogger("agent/claude-cli");
 
+const MCP_ENV_VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+type CliMcpConfigFile = {
+  mcpServers: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
+};
+
+function resolveMcpEnvValue(value: string): string {
+  return value.replace(
+    MCP_ENV_VAR_PATTERN,
+    (_match, envName: string) => process.env[envName] ?? "",
+  );
+}
+
+function resolveMcpConfigFromSnapshot(snapshot?: SkillSnapshot): CliMcpConfigFile | null {
+  const servers = snapshot?.mcpServers ?? [];
+  if (servers.length === 0) {
+    return null;
+  }
+  const result: CliMcpConfigFile["mcpServers"] = {};
+  for (const server of servers) {
+    const name = server.name.trim();
+    const command = server.command.trim();
+    if (!name || !command) {
+      continue;
+    }
+    const args = server.args?.map((arg) => arg.trim()).filter(Boolean);
+    const envEntries = Object.entries(server.env ?? {})
+      .map(([key, value]) => [key.trim(), resolveMcpEnvValue(value)] as const)
+      .filter(([key]) => key.length > 0);
+    const env = envEntries.length > 0 ? Object.fromEntries(envEntries) : undefined;
+    result[name] = {
+      command,
+      ...(args && args.length > 0 ? { args } : {}),
+      ...(env ? { env } : {}),
+    };
+  }
+  return Object.keys(result).length > 0 ? { mcpServers: result } : null;
+}
+
+function resolveMcpExtraArgs(params: {
+  backend: CliBackendConfig;
+  mcpConfigPath?: string;
+}): string[] {
+  if (!params.mcpConfigPath || !params.backend.mcpConfigArg?.trim()) {
+    return [];
+  }
+  const args: string[] = [];
+  if (params.backend.mcpStrictConfigFlag?.trim()) {
+    args.push(params.backend.mcpStrictConfigFlag);
+  }
+  args.push(params.backend.mcpConfigArg, params.mcpConfigPath);
+  return args;
+}
+
+async function writeMcpConfigFile(payload: CliMcpConfigFile): Promise<{
+  path: string;
+  cleanup: () => Promise<void>;
+}> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-mcp-"));
+  const targetPath = path.join(tempDir, crypto.randomUUID() + ".json");
+  await fs.writeFile(targetPath, JSON.stringify(payload, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  return {
+    path: targetPath,
+    cleanup: async () => fs.rm(tempDir, { recursive: true, force: true }),
+  };
+}
+
 export async function runCliAgent(params: {
   sessionId: string;
   sessionKey?: string;
@@ -50,6 +126,7 @@ export async function runCliAgent(params: {
   ownerNumbers?: string[];
   cliSessionId?: string;
   images?: ImageContent[];
+  skillsSnapshot?: SkillSnapshot;
 }): Promise<EmbeddedPiRunResult> {
   const started = Date.now();
   const workspaceResolution = resolveRunWorkspaceDir({
@@ -153,6 +230,23 @@ export async function runCliAgent(params: {
       prompt = appendImagePathsToPrompt(prompt, imagePaths);
     }
   }
+  let cleanupMcpConfig: (() => Promise<void>) | undefined;
+  let mcpConfigPath: string | undefined;
+  const mcpConfig = resolveMcpConfigFromSnapshot(params.skillsSnapshot);
+  if (mcpConfig) {
+    if (!backend.mcpConfigArg?.trim()) {
+      log.warn(
+        "MCP servers are configured but backend " +
+          params.provider +
+          " has no mcpConfigArg; skipping MCP injection",
+      );
+    } else {
+      const mcpConfigFile = await writeMcpConfigFile(mcpConfig);
+      mcpConfigPath = mcpConfigFile.path;
+      cleanupMcpConfig = mcpConfigFile.cleanup;
+    }
+  }
+  const mcpExtraArgs = resolveMcpExtraArgs({ backend, mcpConfigPath });
 
   const { argsPrompt, stdin } = resolvePromptInput({
     backend,
@@ -171,6 +265,7 @@ export async function runCliAgent(params: {
     systemPrompt: systemPromptArg,
     imagePaths,
     promptArg: argsPrompt,
+    extraArgs: mcpExtraArgs,
     useResume,
   });
 
@@ -354,6 +449,9 @@ export async function runCliAgent(params: {
     if (cleanupImages) {
       await cleanupImages();
     }
+    if (cleanupMcpConfig) {
+      await cleanupMcpConfig();
+    }
   }
 }
 
@@ -374,6 +472,7 @@ export async function runClaudeCliAgent(params: {
   ownerNumbers?: string[];
   claudeSessionId?: string;
   images?: ImageContent[];
+  skillsSnapshot?: SkillSnapshot;
 }): Promise<EmbeddedPiRunResult> {
   return runCliAgent({
     sessionId: params.sessionId,
@@ -392,5 +491,6 @@ export async function runClaudeCliAgent(params: {
     ownerNumbers: params.ownerNumbers,
     cliSessionId: params.claudeSessionId,
     images: params.images,
+    skillsSnapshot: params.skillsSnapshot,
   });
 }

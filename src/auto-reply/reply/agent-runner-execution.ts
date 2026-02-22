@@ -200,6 +200,7 @@ export async function runAgentTurnWithFallback(params: {
                   ownerNumbers: params.followupRun.run.ownerNumbers,
                   cliSessionId,
                   images: params.opts?.images,
+                  skillsSnapshot: params.followupRun.run.skillsSnapshot,
                 });
 
                 // CLI backends don't emit streaming assistant events, so we need to

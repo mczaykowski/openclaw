@@ -22,10 +22,19 @@ export type SkillsInstallConfig = {
   nodeManager?: "npm" | "pnpm" | "yarn" | "bun";
 };
 
+export type SkillMcpServerConfig = {
+  enabled?: boolean;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
 export type SkillsConfig = {
   /** Optional bundled-skill allowlist (only affects bundled skills). */
   allowBundled?: string[];
   load?: SkillsLoadConfig;
   install?: SkillsInstallConfig;
   entries?: Record<string, SkillConfig>;
+  /** Optional MCP server overrides and user-managed servers. */
+  mcpServers?: Record<string, SkillMcpServerConfig>;
 };

@@ -219,3 +219,70 @@ describe("resolveCliNoOutputTimeoutMs", () => {
     expect(timeoutMs).toBe(42_000);
   });
 });
+
+describe("runCliAgent MCP config", () => {
+  it("passes MCP config args to backends that support MCP flags", async () => {
+    process.env.TEST_MCP_TOKEN = "secret-token";
+    let seenConfigPath: string | undefined;
+
+    supervisorSpawnMock.mockImplementationOnce(async (input: { argv?: string[] }) => {
+      const argv = input.argv ?? [];
+      const configFlagIndex = argv.indexOf("--mcp-config");
+      expect(configFlagIndex).toBeGreaterThanOrEqual(0);
+      const configPath = argv[configFlagIndex + 1];
+      expect(configPath).toBeTruthy();
+      seenConfigPath = configPath;
+
+      const raw = await fs.readFile(configPath, "utf-8");
+      const parsed = JSON.parse(raw) as {
+        mcpServers?: Record<string, { env?: Record<string, string> }>;
+      };
+      expect(parsed.mcpServers?.github?.env?.GITHUB_TOKEN).toBe("secret-token");
+
+      return createManagedRun({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 35,
+        stdout: "ok",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      });
+    });
+
+    try {
+      const result = await runCliAgent({
+        sessionId: "s-mcp",
+        sessionFile: "/tmp/session.jsonl",
+        workspaceDir: "/tmp",
+        prompt: "hi",
+        provider: "claude-cli",
+        model: "sonnet",
+        timeoutMs: 1_000,
+        runId: "run-mcp",
+        skillsSnapshot: {
+          prompt: "",
+          skills: [],
+          mcpServers: [
+            {
+              name: "github",
+              command: "npx",
+              args: ["@modelcontextprotocol/server-github"],
+              env: { GITHUB_TOKEN: "${TEST_MCP_TOKEN}" },
+            },
+          ],
+        },
+      });
+
+      expect(result.payloads?.[0]?.text).toBe("ok");
+    } finally {
+      delete process.env.TEST_MCP_TOKEN;
+    }
+
+    expect(seenConfigPath).toBeTruthy();
+    if (seenConfigPath) {
+      await expect(fs.stat(seenConfigPath)).rejects.toThrow();
+    }
+  });
+});

@@ -89,6 +89,10 @@ export type CliBackendConfig = {
   imageArg?: string;
   /** How to pass multiple images. */
   imageMode?: "repeat" | "list";
+  /** Flag used to pass an MCP config file path. */
+  mcpConfigArg?: string;
+  /** Optional strict-mode MCP validation flag. */
+  mcpStrictConfigFlag?: string;
   /** Serialize runs for this CLI. */
   serialize?: boolean;
   /** Runtime reliability tuning for this backend's process lifecycle. */

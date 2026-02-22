@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveSkillInvocationPolicy } from "./frontmatter.js";
+import { resolveOpenClawMetadata, resolveSkillInvocationPolicy } from "./frontmatter.js";
 
 describe("resolveSkillInvocationPolicy", () => {
   it("defaults to enabled behaviors", () => {
@@ -15,5 +15,36 @@ describe("resolveSkillInvocationPolicy", () => {
     });
     expect(policy.userInvocable).toBe(false);
     expect(policy.disableModelInvocation).toBe(true);
+  });
+});
+
+describe("resolveOpenClawMetadata", () => {
+  it("parses MCP server metadata", () => {
+    const metadata = resolveOpenClawMetadata({
+      metadata: `
+{
+  openclaw: {
+    mcpServer: {
+      name: "github",
+      command: "npx",
+      args: ["@modelcontextprotocol/server-github"],
+      env: {
+        GITHUB_TOKEN: "\${GITHUB_TOKEN}",
+        INVALID_NUMBER: 1
+      }
+    }
+  }
+}
+      `,
+    });
+
+    expect(metadata?.mcpServer).toEqual({
+      name: "github",
+      command: "npx",
+      args: ["@modelcontextprotocol/server-github"],
+      env: {
+        GITHUB_TOKEN: "${GITHUB_TOKEN}",
+      },
+    });
   });
 });

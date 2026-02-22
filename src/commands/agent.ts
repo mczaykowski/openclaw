@@ -132,6 +132,7 @@ function runAgentAttempt(params: {
       cliSessionId,
       images: params.isFallbackRetry ? undefined : params.opts.images,
       streamParams: params.opts.streamParams,
+      skillsSnapshot: params.skillsSnapshot,
     });
   }
 

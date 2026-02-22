@@ -147,6 +147,12 @@ export type SessionSkillSnapshot = {
   /** Normalized agent-level filter used to build this snapshot; undefined means unrestricted. */
   skillFilter?: string[];
   resolvedSkills?: Skill[];
+  mcpServers?: Array<{
+    name: string;
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+  }>;
   version?: number;
 };
 

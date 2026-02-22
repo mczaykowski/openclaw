@@ -216,6 +216,14 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "mcp",
+    description: "MCP server management",
+    register: async (program) => {
+      const mod = await import("../mcp-cli.js");
+      mod.registerMcpCli(program);
+    },
+  },
+  {
     name: "skills",
     description: "Skills management",
     register: async (program) => {

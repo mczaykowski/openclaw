@@ -356,6 +356,7 @@ export function buildCliArgs(params: {
   systemPrompt?: string | null;
   imagePaths?: string[];
   promptArg?: string;
+  extraArgs?: string[];
   useResume: boolean;
 }): string[] {
   const args: string[] = [...params.baseArgs];
@@ -386,6 +387,9 @@ export function buildCliArgs(params: {
         }
       }
     }
+  }
+  if (params.extraArgs && params.extraArgs.length > 0) {
+    args.push(...params.extraArgs);
   }
   if (params.promptArg !== undefined) {
     args.push(params.promptArg);
