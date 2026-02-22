@@ -1,7 +1,25 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
-import { describe, expect, it } from "vitest";
-import { injectHistoryImagesIntoMessages } from "./attempt.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { loadWorkspaceSkillEntries, type SkillSnapshot } from "../../skills.js";
+import { injectHistoryImagesIntoMessages, resolveEmbeddedMcpSkillsSnapshot } from "./attempt.js";
+
+const tempDirs: string[] = [];
+
+async function makeWorkspace(): Promise<string> {
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-attempt-"));
+  tempDirs.push(workspaceDir);
+  return workspaceDir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0, tempDirs.length).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+  );
+});
 
 describe("injectHistoryImagesIntoMessages", () => {
   const image: ImageContent = { type: "image", data: "abc", mimeType: "image/png" };
@@ -54,5 +72,60 @@ describe("injectHistoryImagesIntoMessages", () => {
 
     expect(didMutate).toBe(false);
     expect(messages[0]?.content).toBe("noop");
+  });
+});
+
+describe("resolveEmbeddedMcpSkillsSnapshot", () => {
+  it("rebuilds workspace snapshot when incoming snapshot has no mcp servers", async () => {
+    const workspaceDir = await makeWorkspace();
+    const skillDir = path.join(workspaceDir, "skills", "filesystem-mcp");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      `---\nname: filesystem-mcp\ndescription: Filesystem MCP\nmetadata:\n  openclaw:\n    mcpServer:\n      name: filesystem\n      command: npx\n      args:\n        - -y\n        - "@modelcontextprotocol/server-filesystem"\n---\n\n# filesystem-mcp\n`,
+      "utf-8",
+    );
+
+    const staleSnapshot: SkillSnapshot = {
+      prompt: "",
+      skills: [],
+      resolvedSkills: [],
+      version: 0,
+    };
+
+    const resolved = resolveEmbeddedMcpSkillsSnapshot({
+      workspaceDir,
+      config: undefined,
+      skillsSnapshot: staleSnapshot,
+      shouldLoadSkillEntries: false,
+      skillEntries: [],
+    });
+
+    expect(resolved).not.toBe(staleSnapshot);
+    expect(resolved.mcpServers?.map((server) => server.name)).toContain("filesystem");
+  });
+
+  it("keeps the incoming snapshot when it already includes mcp servers", async () => {
+    const workspaceDir = await makeWorkspace();
+    const entries = loadWorkspaceSkillEntries(workspaceDir);
+    const snapshotWithMcp: SkillSnapshot = {
+      prompt: "",
+      skills: [],
+      resolvedSkills: [],
+      mcpServers: [
+        { name: "github", command: "npx", args: ["@modelcontextprotocol/server-github"] },
+      ],
+      version: 1,
+    };
+
+    const resolved = resolveEmbeddedMcpSkillsSnapshot({
+      workspaceDir,
+      config: undefined,
+      skillsSnapshot: snapshotWithMcp,
+      shouldLoadSkillEntries: true,
+      skillEntries: entries,
+    });
+
+    expect(resolved).toBe(snapshotWithMcp);
   });
 });

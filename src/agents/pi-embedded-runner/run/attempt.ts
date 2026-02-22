@@ -33,6 +33,7 @@ import {
 } from "../../channel-tools.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
+import { createEmbeddedMcpTools } from "../../mcp-embedded-tools.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
@@ -59,8 +60,11 @@ import { detectRuntimeShell } from "../../shell-utils.js";
 import {
   applySkillEnvOverrides,
   applySkillEnvOverridesFromSnapshot,
+  buildWorkspaceSkillSnapshot,
   loadWorkspaceSkillEntries,
   resolveSkillsPromptForRun,
+  type SkillEntry,
+  type SkillSnapshot,
 } from "../../skills.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
@@ -212,6 +216,31 @@ function summarizeSessionContext(messages: AgentMessage[]): {
   };
 }
 
+type ResolveEmbeddedMcpSkillsSnapshotParams = {
+  workspaceDir: string;
+  config: EmbeddedRunAttemptParams["config"];
+  skillsSnapshot?: SkillSnapshot;
+  shouldLoadSkillEntries: boolean;
+  skillEntries: SkillEntry[];
+};
+
+export function resolveEmbeddedMcpSkillsSnapshot(
+  params: ResolveEmbeddedMcpSkillsSnapshotParams,
+): SkillSnapshot {
+  const existingSnapshot = params.skillsSnapshot;
+  if (existingSnapshot && (existingSnapshot.mcpServers?.length ?? 0) > 0) {
+    return existingSnapshot;
+  }
+
+  return buildWorkspaceSkillSnapshot(params.workspaceDir, {
+    config: params.config,
+    entries: params.shouldLoadSkillEntries
+      ? params.skillEntries
+      : loadWorkspaceSkillEntries(params.workspaceDir, { config: params.config }),
+    skillFilter: existingSnapshot?.skillFilter,
+  });
+}
+
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
@@ -239,6 +268,7 @@ export async function runEmbeddedAttempt(
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
   let restoreSkillEnv: (() => void) | undefined;
+  let cleanupEmbeddedMcpTools: (() => Promise<void>) | undefined;
   process.chdir(effectiveWorkspace);
   try {
     const shouldLoadSkillEntries = !params.skillsSnapshot || !params.skillsSnapshot.resolvedSkills;
@@ -281,6 +311,22 @@ export async function runEmbeddedAttempt(
 
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
+    let embeddedMcpTools: Awaited<ReturnType<typeof createEmbeddedMcpTools>>["tools"] = [];
+    if (!params.disableTools) {
+      const mcpSkillsSnapshot = resolveEmbeddedMcpSkillsSnapshot({
+        workspaceDir: effectiveWorkspace,
+        config: params.config,
+        skillsSnapshot: params.skillsSnapshot,
+        shouldLoadSkillEntries,
+        skillEntries,
+      });
+      const embeddedMcpHandle = await createEmbeddedMcpTools({
+        workspaceDir: effectiveWorkspace,
+        skillsSnapshot: mcpSkillsSnapshot,
+      });
+      embeddedMcpTools = embeddedMcpHandle.tools;
+      cleanupEmbeddedMcpTools = embeddedMcpHandle.cleanup;
+    }
     const toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
@@ -318,6 +364,7 @@ export async function runEmbeddedAttempt(
           requireExplicitMessageTarget:
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
+          extraTools: embeddedMcpTools,
         });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     logToolSchemasForGoogle({ tools, provider: params.provider });
@@ -1194,6 +1241,13 @@ export async function runEmbeddedAttempt(
       await sessionLock.release();
     }
   } finally {
+    if (cleanupEmbeddedMcpTools) {
+      try {
+        await cleanupEmbeddedMcpTools();
+      } catch (err) {
+        log.warn("embedded MCP cleanup failed: " + String(err));
+      }
+    }
     restoreSkillEnv?.();
     process.chdir(prevCwd);
   }
