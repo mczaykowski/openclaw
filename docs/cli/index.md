@@ -50,6 +50,7 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`channels`](/cli/channels)
 - [`security`](/cli/security)
 - [`skills`](/cli/skills)
+- [`mcp`](/cli/mcp)
 - [`voicecall`](/cli/voicecall) (plugin; if installed)
 
 ## Global flags
@@ -112,6 +113,15 @@ openclaw [--dev] [--profile <name>] <command>
     list
     info
     check
+    search
+    install
+    import
+  mcp
+    list
+    add
+    remove
+    start
+    stop
   plugins
     list
     info
@@ -427,21 +437,41 @@ openclaw status --deep
 
 ### `skills`
 
-List and inspect available skills plus readiness info.
+List and inspect available skills plus readiness info, search marketplace skills, and install/import from trusted sources.
 
 Subcommands:
 
 - `skills list`: list skills (default when no subcommand).
 - `skills info <name>`: show details for one skill.
 - `skills check`: summary of ready vs missing requirements.
+- `skills search [query]`: search via `npx skills find`.
+- `skills install <target> [--skill <name>]`: install from skills.sh/GitHub/owner-repo references.
+- `skills import <source> [--skill <name>]`: import via `npx skills add` (trusted-source guard).
 
-Options:
+Common options:
 
-- `--eligible`: show only ready skills.
-- `--json`: output JSON (no styling).
-- `-v`, `--verbose`: include missing requirements detail.
+- `--eligible`: show only ready skills (`list`).
+- `--json`: output JSON (`list`/`info`/`check`).
+- `-v`, `--verbose`: include missing requirements detail (`list`).
+- `--trusted-repo <owner/repo>`: allow additional trusted repo for install/import.
+- `--allow-untrusted`: bypass trust checks for install/import.
+- `--yes`: skip import/install confirmation prompt.
 
-Tip: use `npx clawhub` to search, install, and sync skills.
+Example:
+
+- `openclaw skills install https://skills.sh/vercel-labs/skills/find-skills --yes`
+
+### `mcp`
+
+Manage MCP server overrides merged with skill-provided MCP configs.
+
+Subcommands:
+
+- `mcp list`: list active servers and config overrides.
+- `mcp add <name> --command <cmd> [--arg <value> ...] [--env KEY=VALUE ...] [--disabled]`: create/update override.
+- `mcp remove <name>`: remove override.
+- `mcp start <name>`: enable override.
+- `mcp stop <name>`: disable server by name.
 
 ### `pairing`
 

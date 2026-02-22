@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSkillsImportArgv,
+  buildSkillsSearchArgv,
   isTrustedSkillSource,
+  resolveSkillNameFromSource,
   resolveSkillSourceRepoId,
+  resolveSkillsAddSource,
 } from "./skills-cli.js";
 
 describe("skills-cli import source parsing", () => {
@@ -16,6 +19,20 @@ describe("skills-cli import source parsing", () => {
     expect(resolveSkillSourceRepoId("vercel-labs/skills")).toBe("vercel-labs/skills");
   });
 
+  it("resolves add source + inferred skill from owner/repo/skill", () => {
+    expect(resolveSkillsAddSource("vercel-labs/skills/find-skills")).toBe("vercel-labs/skills");
+    expect(resolveSkillNameFromSource("vercel-labs/skills/find-skills")).toBe("find-skills");
+  });
+
+  it("resolves add source + inferred skill from skills.sh URL", () => {
+    expect(resolveSkillsAddSource("https://skills.sh/vercel-labs/skills/find-skills")).toBe(
+      "vercel-labs/skills",
+    );
+    expect(resolveSkillNameFromSource("https://skills.sh/vercel-labs/skills/find-skills")).toBe(
+      "find-skills",
+    );
+  });
+
   it("rejects malformed sources", () => {
     expect(resolveSkillSourceRepoId("https://skills.sh/vercel-labs")).toBeNull();
     expect(resolveSkillSourceRepoId("not a source")).toBeNull();
@@ -23,6 +40,7 @@ describe("skills-cli import source parsing", () => {
 
   it("trusts vercel-labs/skills by default", () => {
     expect(isTrustedSkillSource("https://skills.sh/vercel-labs/skills/find-skills")).toBe(true);
+    expect(isTrustedSkillSource("vercel-labs/skills/find-skills")).toBe(true);
     expect(isTrustedSkillSource("https://github.com/acme/private-skills")).toBe(false);
   });
 
@@ -33,7 +51,7 @@ describe("skills-cli import source parsing", () => {
   });
 });
 
-describe("skills-cli import argv", () => {
+describe("skills-cli import/search argv", () => {
   it("builds npx skills add command", () => {
     expect(
       buildSkillsImportArgv({
@@ -51,5 +69,10 @@ describe("skills-cli import argv", () => {
       "--agent",
       "openclaw",
     ]);
+  });
+
+  it("builds npx skills find command", () => {
+    expect(buildSkillsSearchArgv({ query: "github" })).toEqual(["npx", "skills", "find", "github"]);
+    expect(buildSkillsSearchArgv({})).toEqual(["npx", "skills", "find"]);
   });
 });
