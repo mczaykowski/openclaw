@@ -15,6 +15,8 @@ let lastClientOptions: {
 } | null = null;
 type StartMode = "hello" | "close" | "silent";
 let startMode: StartMode = "hello";
+let startModes: StartMode[] = [];
+let startCount = 0;
 let closeCode = 1006;
 let closeReason = "";
 
@@ -59,9 +61,11 @@ vi.mock("./client.js", () => ({
       return { ok: true };
     }
     start() {
-      if (startMode === "hello") {
+      startCount += 1;
+      const mode = startModes.length > 0 ? startModes.shift()! : startMode;
+      if (mode === "hello") {
         void lastClientOptions?.onHelloOk?.();
-      } else if (startMode === "close") {
+      } else if (mode === "close") {
         lastClientOptions?.onClose?.(closeCode, closeReason);
       }
     }
@@ -79,6 +83,8 @@ describe("callGateway url resolution", () => {
     pickPrimaryLanIPv4.mockReset();
     lastClientOptions = null;
     startMode = "hello";
+    startModes = [];
+    startCount = 0;
     closeCode = 1006;
     closeReason = "";
   });
@@ -241,6 +247,8 @@ describe("callGateway error details", () => {
     pickPrimaryLanIPv4.mockReset();
     lastClientOptions = null;
     startMode = "hello";
+    startModes = [];
+    startCount = 0;
     closeCode = 1006;
     closeReason = "";
   });
@@ -272,6 +280,40 @@ describe("callGateway error details", () => {
     expect(err?.message).toContain("Bind: loopback");
   });
 
+  it("retries one transient local abnormal closure", async () => {
+    startModes = ["close", "hello"];
+    closeCode = 1006;
+    closeReason = "";
+    loadConfig.mockReturnValue({
+      gateway: { mode: "local", bind: "loopback" },
+    });
+    resolveGatewayPort.mockReturnValue(18789);
+    pickPrimaryTailnetIPv4.mockReturnValue(undefined);
+
+    const result = await callGateway<{ ok: boolean }>({ method: "health" });
+
+    expect(result).toEqual({ ok: true });
+    expect(startCount).toBe(2);
+  });
+
+  it("does not retry abnormal closure for remote targets", async () => {
+    startModes = ["close", "hello"];
+    closeCode = 1006;
+    closeReason = "";
+    loadConfig.mockReturnValue({
+      gateway: {
+        mode: "remote",
+        bind: "loopback",
+        remote: { url: "wss://remote.example/ws" },
+      },
+    });
+    resolveGatewayPort.mockReturnValue(18789);
+    pickPrimaryTailnetIPv4.mockReturnValue(undefined);
+
+    await expect(callGateway({ method: "health" })).rejects.toThrow("gateway closed (1006");
+    expect(startCount).toBe(1);
+  });
+
   it("includes connection details on timeout", async () => {
     startMode = "silent";
     loadConfig.mockReturnValue({
@@ -296,7 +338,7 @@ describe("callGateway error details", () => {
   });
 
   it("does not overflow very large timeout values", async () => {
-    startMode = "silent";
+    startModes = ["silent", "close"];
     loadConfig.mockReturnValue({
       gateway: { mode: "local", bind: "loopback" },
     });
@@ -313,9 +355,11 @@ describe("callGateway error details", () => {
     expect(err).toBeNull();
 
     lastClientOptions?.onClose?.(1006, "");
+    await vi.advanceTimersByTimeAsync(150);
     await promise;
 
     expect(err?.message).toContain("gateway closed (1006");
+    expect(startCount).toBe(2);
   });
 
   it("fails fast when remote mode is missing remote url", async () => {
@@ -342,6 +386,8 @@ describe("callGateway url override auth requirements", () => {
     pickPrimaryLanIPv4.mockReset();
     lastClientOptions = null;
     startMode = "hello";
+    startModes = [];
+    startCount = 0;
     closeCode = 1006;
     closeReason = "";
     resolveGatewayPort.mockReturnValue(18789);
@@ -379,6 +425,8 @@ describe("callGateway password resolution", () => {
     pickPrimaryLanIPv4.mockReset();
     lastClientOptions = null;
     startMode = "hello";
+    startModes = [];
+    startCount = 0;
     closeCode = 1006;
     closeReason = "";
     delete process.env.OPENCLAW_GATEWAY_PASSWORD;
@@ -478,6 +526,8 @@ describe("callGateway token resolution", () => {
     pickPrimaryLanIPv4.mockReset();
     lastClientOptions = null;
     startMode = "hello";
+    startModes = [];
+    startCount = 0;
     closeCode = 1006;
     closeReason = "";
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
