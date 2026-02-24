@@ -187,4 +187,88 @@ describe("handleInlineActions exact JSON tool call", () => {
     expect(toolExecuteMock).not.toHaveBeenCalled();
     expect(typing.cleanup).toHaveBeenCalled();
   });
+
+  it("matches exact tool call with leading speaker line when text commands are disabled", async () => {
+    handleCommandsMock.mockReset();
+    createOpenClawToolsMock.mockReset();
+    toolExecuteMock.mockReset();
+
+    toolExecuteMock.mockResolvedValue({
+      content: [{ type: "text", text: '{"status":"ok"}' }],
+    });
+    createOpenClawToolsMock.mockReturnValue([
+      {
+        name: "subagents",
+        execute: toolExecuteMock,
+      },
+    ]);
+
+    const body = `mariusz\nCall subagents with this JSON arguments exactly:\n{\n  "action": "list",\n  "recentMinutes": 5\n}\nReturn only the tool result JSON.`;
+
+    const typing = makeTyping();
+    const ctx = buildTestCtx({
+      Body: body,
+      CommandBody: body,
+      From: "matrix:@owner:example.com",
+      To: "matrix:@zed:example.com",
+      Provider: "matrix",
+      Surface: "matrix",
+      CommandAuthorized: false,
+    });
+
+    const result = await handleInlineActions({
+      ctx,
+      sessionCtx: ctx as unknown as TemplateContext,
+      cfg: {},
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp",
+      isGroup: false,
+      typing,
+      allowTextCommands: false,
+      inlineStatusRequested: false,
+      command: {
+        surface: "matrix",
+        channel: "matrix",
+        channelId: "matrix",
+        ownerList: [],
+        senderIsOwner: false,
+        isAuthorizedSender: false,
+        senderId: "@owner:example.com",
+        abortKey: "matrix:@owner:example.com",
+        rawBodyNormalized: body,
+        commandBodyNormalized: body,
+        from: "matrix:@owner:example.com",
+        to: "matrix:@zed:example.com",
+      },
+      directives: clearInlineDirectives(body),
+      cleanedBody: body,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      elevatedFailures: [],
+      defaultActivation: () => ({ enabled: true, message: "" }),
+      resolvedThinkLevel: undefined,
+      resolvedVerboseLevel: undefined,
+      resolvedReasoningLevel: "off",
+      resolvedElevatedLevel: "off",
+      resolveDefaultThinkingLevel: async () => "off",
+      provider: "minimax",
+      model: "MiniMax-M2.5",
+      contextTokens: 0,
+      abortedLastRun: false,
+      sessionScope: "per-sender",
+    });
+
+    expect(result).toEqual({
+      kind: "reply",
+      reply: { text: '{"status":"ok"}' },
+    });
+    expect(handleCommandsMock).not.toHaveBeenCalled();
+    expect(toolExecuteMock).toHaveBeenCalledTimes(1);
+    expect(toolExecuteMock.mock.calls[0]?.[1]).toEqual({
+      action: "list",
+      recentMinutes: 5,
+    });
+    expect(typing.cleanup).toHaveBeenCalled();
+  });
 });

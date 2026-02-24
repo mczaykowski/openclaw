@@ -95,7 +95,7 @@ function extractTextFromToolResult(result: any): string | null {
 }
 
 const EXACT_TOOL_CALL_HEADER_RE =
-  /^call\s+([a-zA-Z0-9_.:-]+)\s+with(?:\s+this)?\s+json(?:\s+arguments?)?(?:\s+exactly)?\s*:/i;
+  /(?:^|\n)\s*call\s+([a-zA-Z0-9_.:-]+)\s+with(?:\s+this)?\s+json(?:\s+arguments?)?(?:\s+exactly)?\s*:/i;
 const EXACT_TOOL_CALL_TRAILING_RE = /^return\s+only\s+the\s+tool\s+result\s+json\.?$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -167,9 +167,9 @@ function parseExactToolCallRequest(
   | { matched: false }
   | { matched: true; toolName: string; args: Record<string, unknown> }
   | { matched: true; error: string } {
-  const trimmed = body.trim();
-  const header = trimmed.match(EXACT_TOOL_CALL_HEADER_RE);
-  if (!header) {
+  const source = body || "";
+  const header = source.match(EXACT_TOOL_CALL_HEADER_RE);
+  if (!header || header.index === undefined) {
     return { matched: false };
   }
 
@@ -178,7 +178,7 @@ function parseExactToolCallRequest(
     return { matched: true, error: "Tool name is required." };
   }
 
-  const afterHeader = trimmed.slice(header[0].length);
+  const afterHeader = source.slice(header.index + header[0].length);
   const extracted = extractJsonObjectWithRemainder(afterHeader);
   if (!extracted.ok) {
     return { matched: true, error: extracted.error };
@@ -378,10 +378,9 @@ export async function handleInlineActions(params: {
     cleanedBody = rewrittenBody;
   }
 
-  const exactToolCall =
-    allowTextCommands && command.isAuthorizedSender
-      ? parseExactToolCallRequest(command.commandBodyNormalized)
-      : { matched: false as const };
+  const exactToolCall = parseExactToolCallRequest(
+    cleanedBody || command.commandBodyNormalized || ctx.Body || "",
+  );
   if (exactToolCall.matched) {
     if ("error" in exactToolCall) {
       typing.cleanup();
