@@ -20,7 +20,7 @@ export const AgentHandoffPayloadSchema = Type.Object(
     objective: Type.String({ minLength: 1 }),
     constraints: Type.Array(Type.String()),
     artifacts: Type.Array(Type.String()),
-    status: Type.Union(HANDOFF_STATUS_VALUES.map((value) => Type.Literal(value))),
+    status: Type.String({ enum: [...HANDOFF_STATUS_VALUES] }),
     next_actor: Type.String({ minLength: 1 }),
     notify_target: Type.String({ minLength: 1 }),
   },
