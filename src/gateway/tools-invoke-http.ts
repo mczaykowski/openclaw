@@ -4,7 +4,9 @@ import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import {
   resolveEffectiveToolPolicy,
   resolveGroupToolPolicy,
+  resolveRoleToolPolicy,
   resolveSubagentToolPolicy,
+  resolveToolRoleKey,
 } from "../agents/pi-tools.policy.js";
 import {
   applyToolPolicyPipeline,
@@ -233,6 +235,8 @@ export async function handleToolsInvokeHttpRequest(
   const subagentPolicy = isSubagentSessionKey(sessionKey)
     ? resolveSubagentToolPolicy(cfg)
     : undefined;
+  const roleKey = resolveToolRoleKey(sessionKey);
+  const rolePolicy = resolveRoleToolPolicy({ config: cfg, sessionKey });
 
   // Build tool list (core + plugin tools).
   const allTools = createOpenClawTools({
@@ -248,6 +252,7 @@ export async function handleToolsInvokeHttpRequest(
       agentPolicy,
       agentProviderPolicy,
       groupPolicy,
+      rolePolicy,
       subagentPolicy,
     ]),
   });
@@ -271,6 +276,10 @@ export async function handleToolsInvokeHttpRequest(
         groupPolicy,
         agentId,
       }),
+      {
+        policy: rolePolicy,
+        label: roleKey ? `tools.roles (${roleKey})` : "tools.roles",
+      },
       { policy: subagentPolicy, label: "subagent tools.allow" },
     ],
   });

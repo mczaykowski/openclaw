@@ -29,7 +29,9 @@ import {
   isToolAllowedByPolicies,
   resolveEffectiveToolPolicy,
   resolveGroupToolPolicy,
+  resolveRoleToolPolicy,
   resolveSubagentToolPolicy,
+  resolveToolRoleKey,
 } from "./pi-tools.policy.js";
 import {
   assertRequiredParams,
@@ -238,6 +240,11 @@ export function createOpenClawCodingTools(options?: {
           getSubagentDepthFromSessionStore(options.sessionKey, { cfg: options.config }),
         )
       : undefined;
+  const roleKey = resolveToolRoleKey(options?.sessionKey);
+  const rolePolicy = resolveRoleToolPolicy({
+    config: options?.config,
+    sessionKey: options?.sessionKey,
+  });
   const allowBackground = isToolAllowedByPolicies("process", [
     profilePolicyWithAlsoAllow,
     providerProfilePolicyWithAlsoAllow,
@@ -246,6 +253,7 @@ export function createOpenClawCodingTools(options?: {
     agentPolicy,
     agentProviderPolicy,
     groupPolicy,
+    rolePolicy,
     sandbox?.tools,
     subagentPolicy,
   ]);
@@ -410,6 +418,7 @@ export function createOpenClawCodingTools(options?: {
         agentPolicy,
         agentProviderPolicy,
         groupPolicy,
+        rolePolicy,
         sandbox?.tools,
         subagentPolicy,
       ]),
@@ -443,6 +452,10 @@ export function createOpenClawCodingTools(options?: {
         groupPolicy,
         agentId,
       }),
+      {
+        policy: rolePolicy,
+        label: roleKey ? `tools.roles (${roleKey})` : "tools.roles",
+      },
       { policy: sandbox?.tools, label: "sandbox tools.allow" },
       { policy: subagentPolicy, label: "subagent tools.allow" },
     ],

@@ -4,7 +4,9 @@ import type { OpenClawConfig } from "../config/config.js";
 import {
   filterToolsByPolicy,
   isToolAllowedByPolicyName,
+  resolveRoleToolPolicy,
   resolveSubagentToolPolicy,
+  resolveToolRoleKey,
 } from "./pi-tools.policy.js";
 
 function createStubTool(name: string): AgentTool<unknown, unknown> {
@@ -127,5 +129,60 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
     const policy = resolveSubagentToolPolicy(leafCfg);
     // Default depth=1, maxSpawnDepth=1 → leaf
     expect(isToolAllowedByPolicyName("sessions_spawn", policy)).toBe(false);
+  });
+});
+
+describe("resolveToolRoleKey", () => {
+  it("maps main sessions to main role", () => {
+    expect(resolveToolRoleKey("agent:main:main")).toBe("main");
+  });
+
+  it("maps subagent sessions to explicit role", () => {
+    expect(resolveToolRoleKey("agent:main:subagent:zed-coder")).toBe("subagent:zed-coder");
+  });
+
+  it("maps nested subagent sessions to leaf role", () => {
+    expect(resolveToolRoleKey("agent:main:subagent:zed-orchestrator:subagent:zed-coder")).toBe(
+      "subagent:zed-coder",
+    );
+  });
+});
+
+describe("resolveRoleToolPolicy", () => {
+  const cfg = {
+    tools: {
+      roles: {
+        main: { allow: ["read"] },
+        "subagent:zed-coder": { allow: ["read", "write"] },
+        subagent: { allow: ["read"] },
+      },
+    },
+  } as unknown as OpenClawConfig;
+
+  it("uses exact subagent role match when present", () => {
+    const policy = resolveRoleToolPolicy({
+      config: cfg,
+      sessionKey: "agent:main:subagent:zed-coder",
+    });
+    expect(isToolAllowedByPolicyName("write", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("exec", policy)).toBe(false);
+  });
+
+  it("falls back to generic subagent role policy", () => {
+    const policy = resolveRoleToolPolicy({
+      config: cfg,
+      sessionKey: "agent:main:subagent:unknown",
+    });
+    expect(isToolAllowedByPolicyName("read", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("write", policy)).toBe(false);
+  });
+
+  it("uses main role policy for non-subagent sessions", () => {
+    const policy = resolveRoleToolPolicy({
+      config: cfg,
+      sessionKey: "agent:main:main",
+    });
+    expect(isToolAllowedByPolicyName("read", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("write", policy)).toBe(false);
   });
 });
