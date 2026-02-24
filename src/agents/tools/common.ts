@@ -174,6 +174,79 @@ export type ReactionParams = {
   isEmpty: boolean;
 };
 
+const TOOL_AUDIT_REDACTED = "[REDACTED]";
+const TOOL_AUDIT_MAX_DEPTH = 6;
+const TOOL_AUDIT_MAX_ARRAY_ITEMS = 30;
+const TOOL_AUDIT_MAX_OBJECT_KEYS = 60;
+const TOOL_AUDIT_MAX_STRING_LENGTH = 500;
+const TOOL_AUDIT_SENSITIVE_KEY_RE =
+  /(token|secret|password|passwd|api[_-]?key|authorization|cookie|private[_-]?key|bearer|session)/i;
+
+function sanitizeToolAuditString(value: string): string {
+  if (value.length <= TOOL_AUDIT_MAX_STRING_LENGTH) {
+    return value;
+  }
+  const omitted = value.length - TOOL_AUDIT_MAX_STRING_LENGTH;
+  return `${value.slice(0, TOOL_AUDIT_MAX_STRING_LENGTH)}...[truncated ${omitted} chars]`;
+}
+
+function sanitizeToolAuditValue(value: unknown, depth: number): unknown {
+  if (depth >= TOOL_AUDIT_MAX_DEPTH) {
+    return "[MAX_DEPTH]";
+  }
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return sanitizeToolAuditString(value);
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    const out = value
+      .slice(0, TOOL_AUDIT_MAX_ARRAY_ITEMS)
+      .map((entry) => sanitizeToolAuditValue(entry, depth + 1));
+    if (value.length > TOOL_AUDIT_MAX_ARRAY_ITEMS) {
+      out.push(`[TRUNCATED_ITEMS:${value.length - TOOL_AUDIT_MAX_ARRAY_ITEMS}]`);
+    }
+    return out;
+  }
+  if (typeof value === "function") {
+    return "[FUNCTION]";
+  }
+  if (typeof value === "symbol") {
+    return "[SYMBOL]";
+  }
+  if (typeof value !== "object") {
+    return "[UNSUPPORTED_TYPE]";
+  }
+
+  const out: Record<string, unknown> = {};
+  const entries = Object.entries(value as Record<string, unknown>);
+  const limitedEntries = entries.slice(0, TOOL_AUDIT_MAX_OBJECT_KEYS);
+  for (const [key, entryValue] of limitedEntries) {
+    if (TOOL_AUDIT_SENSITIVE_KEY_RE.test(key)) {
+      out[key] = TOOL_AUDIT_REDACTED;
+      continue;
+    }
+    out[key] = sanitizeToolAuditValue(entryValue, depth + 1);
+  }
+  if (entries.length > TOOL_AUDIT_MAX_OBJECT_KEYS) {
+    out.__truncated_keys = entries.length - TOOL_AUDIT_MAX_OBJECT_KEYS;
+  }
+  return out;
+}
+
+export function sanitizeToolArgsForAudit(value: unknown): unknown {
+  return sanitizeToolAuditValue(value, 0);
+}
+
 export function readReactionParams(
   params: Record<string, unknown>,
   options: {

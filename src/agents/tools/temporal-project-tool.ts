@@ -4,7 +4,13 @@ import type { AnyAgentTool } from "./common.js";
 import { loadConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { OpenClawTemporalClient } from "../../temporal/client/index.js";
-import { ToolInputError, jsonResult, readNumberParam, readStringParam } from "./common.js";
+import {
+  ToolInputError,
+  jsonResult,
+  readNumberParam,
+  readStringParam,
+  sanitizeToolArgsForAudit,
+} from "./common.js";
 
 const log = createSubsystemLogger("temporal/project-tool");
 
@@ -493,6 +499,10 @@ export function createTemporalProjectTool(): AnyAgentTool {
     parameters: TemporalProjectToolSchema,
     execute: async (_toolCallId, rawArgs) => {
       const args = rawArgs as Record<string, unknown>;
+      log.info("temporal_project tool invoked", {
+        toolCallId: _toolCallId,
+        args: sanitizeToolArgsForAudit(args),
+      });
 
       const cfg = loadConfig();
       const temporal = cfg.temporal;
