@@ -8,6 +8,11 @@ import { callGateway } from "../../gateway/call.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
 import { resolveAgentConfig } from "../agent-scope.js";
+import {
+  buildHandoffPrompt,
+  AgentHandoffPayloadSchema,
+  parseAgentHandoffPayload,
+} from "../handoff.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import { optionalStringEnum } from "../schema/typebox.js";
@@ -31,6 +36,7 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat: older callers used timeoutSeconds for this tool.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  handoff: Type.Optional(AgentHandoffPayloadSchema),
 });
 
 function splitModelRef(ref?: string) {
@@ -152,6 +158,16 @@ export function createSessionsSpawnTool(opts?: {
       const targetAgentId = requestedAgentId
         ? normalizeAgentId(requestedAgentId)
         : requesterAgentId;
+      const parsedHandoff =
+        params.handoff === undefined ? null : parseAgentHandoffPayload(params.handoff);
+      if (parsedHandoff && !parsedHandoff.ok) {
+        return jsonResult({
+          status: "error",
+          error: parsedHandoff.error,
+        });
+      }
+      const handoff = parsedHandoff?.handoff;
+      const runTask = handoff?.objective ?? task;
       if (targetAgentId !== requesterAgentId) {
         const allowAgents = resolveAgentConfig(cfg, requesterAgentId)?.subagents?.allowAgents ?? [];
         const allowAny = allowAgents.some((value) => value.trim() === "*");
@@ -270,7 +286,7 @@ export function createSessionsSpawnTool(opts?: {
         requesterOrigin,
         childSessionKey,
         label: label || undefined,
-        task,
+        task: runTask,
         childDepth,
         maxSpawnDepth,
       });
@@ -281,7 +297,11 @@ export function createSessionsSpawnTool(opts?: {
         const response = await callGateway<{ runId: string }>({
           method: "agent",
           params: {
-            message: task,
+            message: handoff
+              ? buildHandoffPrompt({
+                  handoff,
+                })
+              : task,
             sessionKey: childSessionKey,
             channel: requesterOrigin?.channel,
             to: requesterOrigin?.to ?? undefined,
@@ -322,11 +342,12 @@ export function createSessionsSpawnTool(opts?: {
         requesterSessionKey: requesterInternalKey,
         requesterOrigin,
         requesterDisplayKey,
-        task,
+        task: runTask,
         cleanup,
         label: label || undefined,
         model: resolvedModel,
         runTimeoutSeconds,
+        handoff,
       });
 
       return jsonResult({

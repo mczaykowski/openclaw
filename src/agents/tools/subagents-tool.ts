@@ -19,6 +19,11 @@ import {
   truncateLine,
 } from "../../shared/subagents-format.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
+import {
+  AgentHandoffPayloadSchema,
+  buildHandoffPrompt,
+  parseAgentHandoffPayload,
+} from "../handoff.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
 import { abortEmbeddedPiRun } from "../pi-embedded.js";
 import { optionalStringEnum } from "../schema/typebox.js";
@@ -49,6 +54,7 @@ const SubagentsToolSchema = Type.Object({
   action: optionalStringEnum(SUBAGENT_ACTIONS),
   target: Type.Optional(Type.String()),
   message: Type.Optional(Type.String()),
+  handoff: Type.Optional(AgentHandoffPayloadSchema),
   recentMinutes: Type.Optional(Type.Number({ minimum: 1 })),
 });
 
@@ -566,7 +572,31 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
       }
       if (action === "steer") {
         const target = readStringParam(params, "target", { required: true });
-        const message = readStringParam(params, "message", { required: true });
+        const parsedHandoff =
+          params.handoff === undefined ? null : parseAgentHandoffPayload(params.handoff);
+        if (parsedHandoff && !parsedHandoff.ok) {
+          return jsonResult({
+            status: "error",
+            action: "steer",
+            target,
+            error: parsedHandoff.error,
+          });
+        }
+        const guidance = readStringParam(params, "message");
+        const message = parsedHandoff?.handoff
+          ? buildHandoffPrompt({
+              handoff: parsedHandoff.handoff,
+              guidance,
+            })
+          : guidance;
+        if (!message) {
+          return jsonResult({
+            status: "error",
+            action: "steer",
+            target,
+            error: "Usage: /subagents steer <id|#> <message> (or provide handoff payload)",
+          });
+        }
         if (message.length > MAX_STEER_MESSAGE_CHARS) {
           return jsonResult({
             status: "error",
@@ -704,6 +734,8 @@ export function createSubagentsTool(opts?: { agentSessionKey?: string }): AnyAge
           nextRunId: runId,
           fallback: resolved.entry,
           runTimeoutSeconds: resolved.entry.runTimeoutSeconds ?? 0,
+          task: parsedHandoff?.handoff?.objective,
+          handoff: parsedHandoff?.handoff,
         });
 
         return jsonResult({
