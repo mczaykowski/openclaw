@@ -82,6 +82,118 @@ function normalizeMcpToolSchema(inputSchema: unknown): Record<string, unknown> {
   };
 }
 
+function toMcpText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value == null) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "[unserializable mcp value]";
+  }
+}
+
+function normalizeMcpContentBlocks(content: unknown): unknown {
+  if (typeof content === "string") {
+    return [{ type: "text", text: content }];
+  }
+  if (!Array.isArray(content)) {
+    return content;
+  }
+
+  let changed = false;
+  const normalized = content.map((block) => {
+    if (!isPlainObject(block)) {
+      changed = true;
+      return {
+        type: "text",
+        text: toMcpText(block),
+      };
+    }
+
+    const type = typeof block.type === "string" ? block.type : "";
+    if (type === "text" || (!type && Object.prototype.hasOwnProperty.call(block, "text"))) {
+      const normalizedText = toMcpText(block.text);
+      if (type !== "text" || block.text !== normalizedText) {
+        changed = true;
+      }
+      return {
+        ...block,
+        type: "text",
+        text: normalizedText,
+      };
+    }
+
+    if (type === "image" || type === "audio" || type === "resource_link" || type === "resource") {
+      return block;
+    }
+
+    changed = true;
+    return {
+      type: "text",
+      text: toMcpText(block),
+    };
+  });
+
+  return changed ? normalized : content;
+}
+
+export function normalizeMcpToolCallResult(result: unknown): unknown {
+  if (!isPlainObject(result) || !Object.prototype.hasOwnProperty.call(result, "content")) {
+    return result;
+  }
+  const normalizedContent = normalizeMcpContentBlocks(result.content);
+  if (normalizedContent === result.content) {
+    return result;
+  }
+  return {
+    ...result,
+    content: normalizedContent,
+  };
+}
+
+export type McpErrorRecovery = {
+  recovered: boolean;
+  result?: unknown;
+};
+
+export function recoverMcpToolCallResultFromError(
+  error: Record<string, unknown>,
+): McpErrorRecovery {
+  const code = typeof error.code === "number" ? error.code : undefined;
+  const message = typeof error.message === "string" ? error.message : "";
+  if (code !== -32602 || !/invalid tools\/call result/i.test(message)) {
+    return { recovered: false };
+  }
+
+  const data = error.data;
+  if (!isPlainObject(data)) {
+    return { recovered: false };
+  }
+
+  if (isPlainObject(data.result)) {
+    return {
+      recovered: true,
+      result: normalizeMcpToolCallResult(data.result),
+    };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, "content")) {
+    return {
+      recovered: true,
+      result: normalizeMcpToolCallResult(data),
+    };
+  }
+
+  return { recovered: false };
+}
+
 function normalizeServerSpec(spec: unknown): McpServerSpec | null {
   if (!isPlainObject(spec)) {
     return null;
@@ -325,6 +437,15 @@ class McpStdioClient {
     pending.abortCleanup?.();
 
     if (isPlainObject(message.error)) {
+      const recovery = recoverMcpToolCallResultFromError(message.error);
+      if (recovery.recovered) {
+        log.warn(
+          `[${this.serverName}] recovered non-standard tools/call result payload from MCP error response`,
+        );
+        pending.resolve(recovery.result);
+        return;
+      }
+
       const code = message.error.code;
       const errorMessage = message.error.message;
       const suffix = typeof code === "number" ? ` (${code})` : "";
@@ -614,11 +735,17 @@ export async function createEmbeddedMcpTools(params: {
             if (!isPlainObject(args)) {
               throw new Error(`MCP tool ${toolName} expects an object argument payload.`);
             }
-            const result = await client.callTool({
+            const rawResult = await client.callTool({
               name: entry.name,
               args,
               signal,
             });
+            const result = normalizeMcpToolCallResult(rawResult);
+            if (result !== rawResult) {
+              log.debug(
+                `[${spec.name}] normalized non-standard tools/call result for ${entry.name}`,
+              );
+            }
             return jsonResult({
               status: "ok",
               mcp: {

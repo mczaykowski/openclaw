@@ -81,6 +81,8 @@ describe("sessions tools", () => {
     expect(schemaProp("sessions_send", "timeoutSeconds").type).toBe("number");
     expect(schemaProp("sessions_spawn", "thinking").type).toBe("string");
     expect(schemaProp("sessions_spawn", "runTimeoutSeconds").type).toBe("number");
+    expect(schemaProp("sessions_spawn", "handoff").type).toBe("object");
+    expect(schemaProp("subagents", "handoff").type).toBe("object");
     expect(schemaProp("subagents", "recentMinutes").type).toBe("number");
   });
 
@@ -879,6 +881,146 @@ describe("sessions tools", () => {
       loadSessionStoreSpy.mockRestore();
       resetSubagentRegistryForTests();
     }
+  });
+
+  it("subagents steer accepts structured handoff payload", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        return { runId: "run-steer-handoff-1" };
+      }
+      return {};
+    });
+
+    addSubagentRunForTests({
+      runId: "run-steer-handoff",
+      childSessionKey: "agent:main:subagent:steer-handoff",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "prepare release notes",
+      cleanup: "keep",
+      createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000,
+    });
+
+    const sessionsModule = await import("../config/sessions.js");
+    const loadSessionStoreSpy = vi
+      .spyOn(sessionsModule, "loadSessionStore")
+      .mockImplementation(() => ({
+        "agent:main:subagent:steer-handoff": {
+          sessionId: "child-session-steer-handoff",
+          updatedAt: Date.now(),
+        },
+      }));
+
+    try {
+      const tool = createOpenClawTools({
+        agentSessionKey: "agent:main:main",
+      }).find((candidate) => candidate.name === "subagents");
+      expect(tool).toBeDefined();
+      if (!tool) {
+        throw new Error("missing subagents tool");
+      }
+
+      const result = await tool.execute("call-subagents-steer-handoff", {
+        action: "steer",
+        target: "1",
+        handoff: {
+          task_id: "VER-92-steer",
+          objective: "Re-scope implementation around validated payloads",
+          constraints: ["Keep API stable"],
+          artifacts: ["diff", "test output"],
+          status: "in_progress",
+          next_actor: "subagent:zed-coder",
+          notify_target: "main",
+        },
+      });
+
+      const details = result.details as { status?: string; runId?: string; text?: string };
+      expect(details.status).toBe("accepted");
+      expect(details.runId).toBe("run-steer-handoff-1");
+      expect(details.text).toContain("steered");
+
+      const steerRunCall = calls.find((call) => call.method === "agent");
+      const steerParams = steerRunCall?.params as
+        | { message?: string; sessionKey?: string }
+        | undefined;
+      expect(steerParams?.sessionKey).toBe("agent:main:subagent:steer-handoff");
+      expect(steerParams?.message).toContain('"task_id": "VER-92-steer"');
+
+      const trackedRuns = listSubagentRunsForRequester("agent:main:main");
+      expect(trackedRuns).toHaveLength(1);
+      expect(trackedRuns[0].runId).toBe("run-steer-handoff-1");
+      expect(trackedRuns[0].task).toBe("Re-scope implementation around validated payloads");
+      expect(trackedRuns[0].handoff).toMatchObject({
+        task_id: "VER-92-steer",
+        status: "in_progress",
+      });
+    } finally {
+      loadSessionStoreSpy.mockRestore();
+      resetSubagentRegistryForTests();
+    }
+  });
+
+  it("subagents steer rejects invalid handoff payload", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        return { runId: "run-should-not-happen" };
+      }
+      return {};
+    });
+
+    addSubagentRunForTests({
+      runId: "run-steer-invalid-handoff",
+      childSessionKey: "agent:main:subagent:steer-invalid",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "prepare release notes",
+      cleanup: "keep",
+      createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000,
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+    }).find((candidate) => candidate.name === "subagents");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing subagents tool");
+    }
+
+    const result = await tool.execute("call-subagents-steer-invalid-handoff", {
+      action: "steer",
+      target: "1",
+      handoff: {
+        objective: "Re-scope",
+        constraints: [],
+        artifacts: [],
+        status: "todo",
+        next_actor: "subagent:zed-coder",
+        notify_target: "main",
+      },
+    });
+
+    const details = result.details as { status?: string; error?: string };
+    expect(details.status).toBe("error");
+    expect(String(details.error ?? "")).toContain("handoff.task_id");
+    expect(calls.filter((call) => call.method === "agent")).toHaveLength(0);
+
+    const trackedRuns = listSubagentRunsForRequester("agent:main:main");
+    expect(trackedRuns).toHaveLength(1);
+    expect(trackedRuns[0].runId).toBe("run-steer-invalid-handoff");
   });
 
   it("subagents numeric targets follow active-first list ordering", async () => {

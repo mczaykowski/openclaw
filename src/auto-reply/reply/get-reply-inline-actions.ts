@@ -94,6 +94,120 @@ function extractTextFromToolResult(result: any): string | null {
   return trimmed ? trimmed : null;
 }
 
+const EXACT_TOOL_CALL_HEADER_RE =
+  /(?:^|\n)\s*call\s+([a-zA-Z0-9_.:-]+)\s+with(?:\s+this)?\s+json(?:\s+arguments?)?(?:\s+exactly)?\s*:/i;
+const EXACT_TOOL_CALL_TRAILING_RE = /^return\s+only\s+the\s+tool\s+result\s+json\.?$/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function extractJsonObjectWithRemainder(
+  body: string,
+): { ok: true; jsonText: string; trailing: string } | { ok: false; error: string } {
+  const start = body.indexOf("{");
+  if (start < 0) {
+    return { ok: false, error: "Missing JSON object body after header." };
+  }
+  const prefix = body.slice(0, start).trim();
+  if (prefix.length > 0) {
+    return { ok: false, error: "Unexpected text before JSON object." };
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < body.length; i += 1) {
+    const ch = body[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          ok: true,
+          jsonText: body.slice(start, i + 1),
+          trailing: body.slice(i + 1),
+        };
+      }
+      continue;
+    }
+  }
+
+  return { ok: false, error: "Unterminated JSON object." };
+}
+
+function parseExactToolCallRequest(
+  body: string,
+):
+  | { matched: false }
+  | { matched: true; toolName: string; args: Record<string, unknown> }
+  | { matched: true; error: string } {
+  const source = body || "";
+  const header = source.match(EXACT_TOOL_CALL_HEADER_RE);
+  if (!header || header.index === undefined) {
+    return { matched: false };
+  }
+
+  const toolName = header[1]?.trim();
+  if (!toolName) {
+    return { matched: true, error: "Tool name is required." };
+  }
+
+  const afterHeader = source.slice(header.index + header[0].length);
+  const extracted = extractJsonObjectWithRemainder(afterHeader);
+  if (!extracted.ok) {
+    return { matched: true, error: extracted.error };
+  }
+
+  const trailing = extracted.trailing.trim();
+  if (trailing.length > 0 && !EXACT_TOOL_CALL_TRAILING_RE.test(trailing)) {
+    return {
+      matched: true,
+      error:
+        "Unexpected trailing text after JSON. Keep only the JSON block and optional Return-only line.",
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extracted.jsonText);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { matched: true, error: "Invalid JSON: " + message };
+  }
+
+  if (!isRecord(parsed)) {
+    return { matched: true, error: "JSON arguments must be an object." };
+  }
+
+  return { matched: true, toolName, args: parsed };
+}
+
 export async function handleInlineActions(params: {
   ctx: MsgContext;
   sessionCtx: TemplateContext;
@@ -262,6 +376,52 @@ export async function handleInlineActions(params: {
     sessionCtx.BodyForAgent = rewrittenBody;
     sessionCtx.BodyStripped = rewrittenBody;
     cleanedBody = rewrittenBody;
+  }
+
+  const exactToolCall = parseExactToolCallRequest(
+    cleanedBody || command.commandBodyNormalized || ctx.Body || "",
+  );
+  if (exactToolCall.matched) {
+    if ("error" in exactToolCall) {
+      typing.cleanup();
+      return { kind: "reply", reply: { text: "❌ " + exactToolCall.error } };
+    }
+
+    const channel =
+      resolveGatewayMessageChannel(ctx.Surface) ??
+      resolveGatewayMessageChannel(ctx.Provider) ??
+      undefined;
+    const tools = createOpenClawTools({
+      agentSessionKey: sessionKey,
+      agentChannel: channel,
+      agentAccountId: (ctx as { AccountId?: string }).AccountId,
+      agentTo: ctx.OriginatingTo ?? ctx.To,
+      agentThreadId: ctx.MessageThreadId ?? undefined,
+      agentDir,
+      workspaceDir,
+      config: cfg,
+    });
+
+    const tool = tools.find((candidate) => candidate.name === exactToolCall.toolName);
+    if (!tool) {
+      typing.cleanup();
+      return {
+        kind: "reply",
+        reply: { text: "❌ Tool not available: " + exactToolCall.toolName },
+      };
+    }
+
+    const toolCallId = "exact_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+    try {
+      const result = await tool.execute(toolCallId, exactToolCall.args);
+      const text = extractTextFromToolResult(result) ?? "✅ Done.";
+      typing.cleanup();
+      return { kind: "reply", reply: { text } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      typing.cleanup();
+      return { kind: "reply", reply: { text: "❌ " + message } };
+    }
   }
 
   const sendInlineReply = async (reply?: ReplyPayload) => {

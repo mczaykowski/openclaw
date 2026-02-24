@@ -380,6 +380,26 @@ describe("createOpenClawCodingTools", () => {
     expect(tools.map((tool) => tool.name)).toEqual(["read"]);
   });
 
+  it("supports role-based tool policy for named subagents", () => {
+    const tools = createOpenClawCodingTools({
+      sessionKey: "agent:main:subagent:zed-coder",
+      config: {
+        tools: {
+          roles: {
+            "subagent:zed-coder": {
+              allow: ["read", "exec"],
+            },
+          },
+        },
+      },
+    });
+    const names = new Set(tools.map((tool) => tool.name));
+    expect(names.has("read")).toBe(true);
+    expect(names.has("exec")).toBe(true);
+    expect(names.has("sessions_spawn")).toBe(false);
+    expect(names.has("message")).toBe(false);
+  });
+
   it("applies tool profiles before allow/deny policies", () => {
     const tools = createOpenClawCodingTools({
       config: { tools: { profile: "messaging" } },

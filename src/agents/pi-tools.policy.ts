@@ -3,7 +3,10 @@ import type { AnyAgentTool } from "./pi-tools.types.js";
 import type { SandboxToolPolicy } from "./sandbox.js";
 import { getChannelDock } from "../channels/dock.js";
 import { resolveChannelGroupToolsPolicy } from "../config/group-policy.js";
-import { resolveThreadParentSessionKey } from "../sessions/session-key-utils.js";
+import {
+  parseAgentSessionKey,
+  resolveThreadParentSessionKey,
+} from "../sessions/session-key-utils.js";
 import { normalizeMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentConfig, resolveAgentIdFromSessionKey } from "./agent-scope.js";
 import { compileGlobPatterns, matchesAnyGlobPattern } from "./glob-pattern.js";
@@ -88,6 +91,53 @@ export function resolveSubagentToolPolicy(cfg?: OpenClawConfig, depth?: number):
   const deny = [...baseDeny, ...(Array.isArray(configured?.deny) ? configured.deny : [])];
   const allow = Array.isArray(configured?.allow) ? configured.allow : undefined;
   return { allow, deny };
+}
+
+export function resolveToolRoleKey(sessionKey: string | undefined | null): string {
+  const raw = (sessionKey ?? "").trim().toLowerCase();
+  if (!raw) {
+    return "main";
+  }
+
+  const parsed = parseAgentSessionKey(raw);
+  const rest = (parsed?.rest ?? raw).trim().toLowerCase();
+  if (!rest || rest === "main") {
+    return "main";
+  }
+
+  const parts = rest.split(":").filter(Boolean);
+  const subagentIndex = parts.lastIndexOf("subagent");
+  if (subagentIndex >= 0) {
+    const role = parts[subagentIndex + 1]?.trim();
+    return role ? `subagent:${role}` : "subagent";
+  }
+
+  return "main";
+}
+
+export function resolveRoleToolPolicy(params: {
+  config?: OpenClawConfig;
+  sessionKey?: string | null;
+}): SandboxToolPolicy | undefined {
+  const roles = params.config?.tools?.roles;
+  if (!roles || typeof roles !== "object") {
+    return undefined;
+  }
+
+  const roleKey = resolveToolRoleKey(params.sessionKey);
+  const exact = roles[roleKey];
+  if (exact) {
+    return pickToolPolicy(exact);
+  }
+
+  if (roleKey.startsWith("subagent:")) {
+    const fallback = roles.subagent ?? roles["subagent:*"];
+    if (fallback) {
+      return pickToolPolicy(fallback);
+    }
+  }
+
+  return undefined;
 }
 
 export function isToolAllowedByPolicyName(name: string, policy?: SandboxToolPolicy): boolean {

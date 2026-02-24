@@ -5,21 +5,29 @@ import type { AnyAgentTool } from "./common.js";
 import { formatThinkingLevels, normalizeThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
 import { resolveAgentConfig } from "../agent-scope.js";
+import {
+  buildHandoffPrompt,
+  AgentHandoffPayloadSchema,
+  parseAgentHandoffPayload,
+} from "../handoff.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import { optionalStringEnum } from "../schema/typebox.js";
 import { buildSubagentSystemPrompt } from "../subagent-announce.js";
 import { getSubagentDepthFromSessionStore } from "../subagent-depth.js";
 import { countActiveRunsForSession, registerSubagentRun } from "../subagent-registry.js";
-import { jsonResult, readStringParam } from "./common.js";
+import { jsonResult, readStringParam, sanitizeToolArgsForAudit } from "./common.js";
 import {
   resolveDisplaySessionKey,
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "./sessions-helpers.js";
+
+const log = createSubsystemLogger("sessions-spawn-tool");
 
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
@@ -31,6 +39,7 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat: older callers used timeoutSeconds for this tool.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  handoff: Type.Optional(AgentHandoffPayloadSchema),
 });
 
 function splitModelRef(ref?: string) {
@@ -84,6 +93,11 @@ export function createSessionsSpawnTool(opts?: {
     parameters: SessionsSpawnToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
+      log.info("sessions_spawn tool invoked", {
+        toolCallId: _toolCallId,
+        sessionKey: opts?.agentSessionKey,
+        args: sanitizeToolArgsForAudit(params),
+      });
       const task = readStringParam(params, "task", { required: true });
       const label = typeof params.label === "string" ? params.label.trim() : "";
       const requestedAgentId = readStringParam(params, "agentId");
@@ -152,6 +166,16 @@ export function createSessionsSpawnTool(opts?: {
       const targetAgentId = requestedAgentId
         ? normalizeAgentId(requestedAgentId)
         : requesterAgentId;
+      const parsedHandoff =
+        params.handoff === undefined ? null : parseAgentHandoffPayload(params.handoff);
+      if (parsedHandoff && !parsedHandoff.ok) {
+        return jsonResult({
+          status: "error",
+          error: parsedHandoff.error,
+        });
+      }
+      const handoff = parsedHandoff?.handoff;
+      const runTask = handoff?.objective ?? task;
       if (targetAgentId !== requesterAgentId) {
         const allowAgents = resolveAgentConfig(cfg, requesterAgentId)?.subagents?.allowAgents ?? [];
         const allowAny = allowAgents.some((value) => value.trim() === "*");
@@ -270,7 +294,7 @@ export function createSessionsSpawnTool(opts?: {
         requesterOrigin,
         childSessionKey,
         label: label || undefined,
-        task,
+        task: runTask,
         childDepth,
         maxSpawnDepth,
       });
@@ -281,7 +305,11 @@ export function createSessionsSpawnTool(opts?: {
         const response = await callGateway<{ runId: string }>({
           method: "agent",
           params: {
-            message: task,
+            message: handoff
+              ? buildHandoffPrompt({
+                  handoff,
+                })
+              : task,
             sessionKey: childSessionKey,
             channel: requesterOrigin?.channel,
             to: requesterOrigin?.to ?? undefined,
@@ -322,11 +350,12 @@ export function createSessionsSpawnTool(opts?: {
         requesterSessionKey: requesterInternalKey,
         requesterOrigin,
         requesterDisplayKey,
-        task,
+        task: runTask,
         cleanup,
         label: label || undefined,
         model: resolvedModel,
         runTimeoutSeconds,
+        handoff,
       });
 
       return jsonResult({

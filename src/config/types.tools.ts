@@ -354,6 +354,8 @@ export type ToolsConfig = {
   deny?: string[];
   /** Optional tool policy overrides keyed by provider id or "provider/model". */
   byProvider?: Record<string, ToolPolicyConfig>;
+  /** Per-role tool policy overrides keyed by role id (e.g. "main", "subagent:zed-coder"). */
+  roles?: Record<string, ToolPolicyConfig>;
   web?: {
     search?: {
       /** Enable web search tool (default: true when API key is present). */

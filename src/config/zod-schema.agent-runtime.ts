@@ -223,6 +223,16 @@ export const ToolPolicySchema = ToolPolicyBaseSchema.superRefine((value, ctx) =>
   }
 }).optional();
 
+const RoleToolPolicySchema = ToolPolicyBaseSchema.superRefine((value, ctx) => {
+  if (value.allow && value.allow.length > 0 && value.alsoAllow && value.alsoAllow.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "tools.roles policy cannot set both allow and alsoAllow in the same scope (merge alsoAllow into allow, or remove allow and use profile + alsoAllow)",
+    });
+  }
+});
+
 export const ToolsWebSearchSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -548,6 +558,7 @@ export const ToolsSchema = z
     alsoAllow: z.array(z.string()).optional(),
     deny: z.array(z.string()).optional(),
     byProvider: z.record(z.string(), ToolPolicyWithProfileSchema).optional(),
+    roles: z.record(z.string(), RoleToolPolicySchema).optional(),
     web: ToolsWebSchema,
     media: ToolsMediaSchema,
     links: ToolsLinksSchema,

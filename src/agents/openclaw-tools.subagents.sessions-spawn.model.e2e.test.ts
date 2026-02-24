@@ -6,7 +6,10 @@ import {
   resetSessionsSpawnConfigOverride,
   setSessionsSpawnConfigOverride,
 } from "./openclaw-tools.subagents.sessions-spawn.test-harness.js";
-import { resetSubagentRegistryForTests } from "./subagent-registry.js";
+import {
+  listSubagentRunsForRequester,
+  resetSubagentRegistryForTests,
+} from "./subagent-registry.js";
 
 const callGatewayMock = getCallGatewayMock();
 
@@ -325,6 +328,97 @@ describe("openclaw-tools: subagents (sessions_spawn model + thinking)", () => {
       "invalid model",
     );
     expect(calls.some((call) => call.method === "agent")).toBe(true);
+  });
+
+  it("sessions_spawn rejects invalid handoff payload", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    const calls: Array<{ method?: string }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      calls.push(request);
+      return {};
+    });
+
+    const tool = await getSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "discord",
+    });
+
+    const result = await tool.execute("call-handoff-invalid", {
+      task: "do thing",
+      handoff: {
+        objective: "Build feature",
+        constraints: ["No downtime"],
+        artifacts: ["PR link"],
+        status: "todo",
+        next_actor: "zed-coder",
+        notify_target: "zed-main",
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+    });
+    expect(String((result.details as { error?: string }).error ?? "")).toContain("handoff.task_id");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("sessions_spawn forwards structured handoff and persists it", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    let spawnedMessage: string | undefined;
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      if (request.method === "sessions.patch") {
+        return { ok: true };
+      }
+      if (request.method === "agent") {
+        const params = request.params as { lane?: string; message?: string } | undefined;
+        if (params?.lane === "subagent") {
+          spawnedMessage = params.message;
+          return { runId: "run-handoff", status: "accepted" };
+        }
+        return { runId: "run-main", status: "accepted" };
+      }
+      if (request.method === "agent.wait") {
+        return { status: "timeout" };
+      }
+      return {};
+    });
+
+    const tool = await getSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "discord",
+    });
+
+    const result = await tool.execute("call-handoff-valid", {
+      task: "fallback task",
+      handoff: {
+        task_id: "VER-92",
+        objective: "Implement structured handoff",
+        constraints: ["No breaking API", "Add tests"],
+        artifacts: ["PR", "Test report"],
+        status: "todo",
+        next_actor: "subagent:zed-coder",
+        notify_target: "main",
+      },
+    });
+
+    expect(result.details).toMatchObject({ status: "accepted", runId: "run-handoff" });
+    expect(spawnedMessage).toContain("Structured handoff payload");
+    expect(spawnedMessage).toContain('"task_id": "VER-92"');
+
+    const runs = listSubagentRunsForRequester("agent:main:main");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.task).toBe("Implement structured handoff");
+    expect(runs[0]?.handoff).toMatchObject({
+      task_id: "VER-92",
+      next_actor: "subagent:zed-coder",
+      notify_target: "main",
+    });
   });
 
   it("sessions_spawn supports legacy timeoutSeconds alias", async () => {

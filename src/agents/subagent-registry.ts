@@ -1,3 +1,4 @@
+import type { AgentHandoffPayload } from "./handoff.js";
 import { loadConfig } from "../config/config.js";
 import { callGateway } from "../gateway/call.js";
 import { onAgentEvent } from "../infra/agent-events.js";
@@ -17,6 +18,7 @@ export type SubagentRunRecord = {
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;
+  handoff?: AgentHandoffPayload;
   cleanup: "delete" | "keep";
   label?: string;
   model?: string;
@@ -353,6 +355,8 @@ export function replaceSubagentRunAfterSteer(params: {
   nextRunId: string;
   fallback?: SubagentRunRecord;
   runTimeoutSeconds?: number;
+  task?: string;
+  handoff?: AgentHandoffPayload;
 }) {
   const previousRunId = params.previousRunId.trim();
   const nextRunId = params.nextRunId.trim();
@@ -377,9 +381,14 @@ export function replaceSubagentRunAfterSteer(params: {
   const archiveAtMs = archiveAfterMs ? now + archiveAfterMs : undefined;
   const runTimeoutSeconds = params.runTimeoutSeconds ?? source.runTimeoutSeconds ?? 0;
   const waitTimeoutMs = resolveSubagentWaitTimeoutMs(cfg, runTimeoutSeconds);
+  const task =
+    typeof params.task === "string" && params.task.trim() ? params.task.trim() : source.task;
+  const handoff = params.handoff ?? source.handoff;
 
   const next: SubagentRunRecord = {
     ...source,
+    task,
+    handoff,
     runId: nextRunId,
     startedAt: now,
     endedAt: undefined,
@@ -408,6 +417,7 @@ export function registerSubagentRun(params: {
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;
+  handoff?: AgentHandoffPayload;
   cleanup: "delete" | "keep";
   label?: string;
   model?: string;
@@ -427,6 +437,7 @@ export function registerSubagentRun(params: {
     requesterOrigin,
     requesterDisplayKey: params.requesterDisplayKey,
     task: params.task,
+    handoff: params.handoff,
     cleanup: params.cleanup,
     label: params.label,
     model: params.model,
